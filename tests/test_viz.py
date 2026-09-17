@@ -4,52 +4,11 @@ import json
 import numpy as np
 import pytest
 
-from sf_flat_routes.viz_interactive import (_round_geometry, encode_polyline)
+from sf_flat_routes.viz_interactive import _round_geometry
 from sf_flat_routes.viz_static import hillshade
 
-
-def decode_polyline(s, precision=5):
-    """Reference decoder, mirroring the JavaScript in the map."""
-    factor = 10 ** precision
-    index = lat = lon = 0
-    out = []
-    while index < len(s):
-        for which in ("lat", "lon"):
-            shift = result = 0
-            while True:
-                b = ord(s[index]) - 63
-                index += 1
-                result |= (b & 0x1f) << shift
-                shift += 5
-                if b < 0x20:
-                    break
-            d = ~(result >> 1) if (result & 1) else (result >> 1)
-            if which == "lat":
-                lat += d
-            else:
-                lon += d
-        out.append((lon / factor, lat / factor))
-    return out
-
-
-def test_polyline_round_trips_within_precision():
-    coords = [(-122.41942, 37.77493), (-122.42500, 37.77812),
-              (-122.43111, 37.78001), (-122.41000, 37.76000)]
-    back = decode_polyline(encode_polyline(coords))
-    assert len(back) == len(coords)
-    for (x0, y0), (x1, y1) in zip(coords, back):
-        assert abs(x0 - x1) < 2e-5 and abs(y0 - y1) < 2e-5
-
-
-def test_polyline_of_a_single_point():
-    assert decode_polyline(encode_polyline([(-122.4, 37.8)])) == [(-122.4, 37.8)]
-
-
-def test_polyline_handles_negative_and_zero_deltas():
-    coords = [(-122.4, 37.8), (-122.4, 37.8), (-122.5, 37.7)]
-    back = decode_polyline(encode_polyline(coords))
-    assert len(back) == 3
-    assert back[1] == pytest.approx(back[0])
+# Polyline encoding now lives in the browser payload packer; its tests are in
+# tests/test_webgraph.py.
 
 
 def test_round_geometry_shortens_coordinates():
@@ -68,6 +27,11 @@ def test_round_geometry_handles_multilinestring():
     r = _round_geometry(geo, 4)
     assert r["coordinates"][0][0] == [-122.1235, 37.1235]
     assert r["type"] == "MultiLineString"
+
+
+def test_round_geometry_keeps_only_two_dimensions():
+    geo = {"type": "LineString", "coordinates": [(-122.1, 37.1, 55.0)]}
+    assert _round_geometry(geo, 5)["coordinates"][0] == [-122.1, 37.1]
 
 
 def test_hillshade_is_bounded_and_flat_ground_is_uniform():

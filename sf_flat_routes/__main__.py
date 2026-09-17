@@ -109,14 +109,12 @@ def cmd_validate(args) -> int:
 def cmd_map(args) -> int:
     import geopandas as gpd
     from .corridors import CORRIDORS_GPKG
-    from .pairs import run_pair_analysis
     from .passes import BARRIERS_GEOJSON, BASINS_GEOJSON, PASSES_GEOJSON
     from .pipeline import build_context
     from .viz_interactive import make_interactive_map
     from .viz_static import make_backbone_map, make_grade_map
 
     ctx = build_context()
-    pairs, arcs = run_pair_analysis(ctx.graphs, ctx.points)
     cor = gpd.read_file(CORRIDORS_GPKG)
     pz = gpd.read_file(PASSES_GEOJSON)
     ba = gpd.read_file(BARRIERS_GEOJSON)
@@ -126,7 +124,7 @@ def cmd_map(args) -> int:
         make_backbone_map(cor, ctx.edges, ctx.neighborhoods, pz)
         make_grade_map(ctx.edges, ctx.neighborhoods)
     with step("interactive map", log):
-        make_interactive_map(ctx, cor, pz, ba, pairs, arcs, bs)
+        make_interactive_map(ctx, cor, pz, ba, basins=bs)
     return 0
 
 

@@ -29,13 +29,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+dev = ["pytest>=7.4", "playwright>=1.40", "pyflakes>=3.0"]
 
 [project.scripts]
 sf-flat-routes = "sf_flat_routes.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["sf_flat_routes*"]
+
+[tool.setuptools.package-data]
+sf_flat_routes = ["web/*", "vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

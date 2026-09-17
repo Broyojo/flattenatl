@@ -22,13 +22,30 @@ The full write-up is in **[`outputs/findings.md`](outputs/findings.md)**, and
 the checks against known ground truth are in
 **[`outputs/validation_report.md`](outputs/validation_report.md)**.
 
+## The interactive map
+
+[`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) is a
+single 6.5 MB file that routes in your browser over the real graph — click any
+two points, switch between walking and cycling, choose an objective, or drag
+the cost weights and watch the route respond. Download it and open it; GitHub
+will not render a file this size inline.
+
+![The interactive map](outputs/screenshot_interactive.png)
+
+Here it is showing the flattest walking route from the Bayview to Golden Gate
+Park: 7.67 miles and 353 ft of climbing, against 7.01 miles and 1,076 ft for
+the shortest one. The red arcs are the streets steeper than 10% — they trace
+the city's hills like contours — and the thick pale blue lines are the flat
+corridors the analysis discovered. The route threads between them.
+
 ## What it produces
 
 | Output | What it is |
 |---|---|
-| [`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) | Interactive map with a working routing UI (origin, destination, mode, preference), per-route metrics and elevation profiles. Self-contained: Leaflet is embedded, so it works offline apart from the optional basemap tiles. |
+| [`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) | Interactive map that **routes in your browser over the real graph**: click any two points, choose walking or cycling and one of the four objectives, or drag the α/β/γ sliders and watch the route respond. Per-route metrics and elevation profile included. Self-contained — Leaflet and the whole 160,000-arc graph are embedded, so it works offline apart from the optional basemap tiles. |
 | [`outputs/sf_flat_backbone.png`](outputs/sf_flat_backbone.png) / `.pdf` | Publication-quality static map of the low-elevation backbone, over a hillshade computed from the same lidar the analysis uses. |
 | [`outputs/sf_street_grades.png`](outputs/sf_street_grades.png) | Citywide street-gradient map. |
+| [`outputs/screenshot_interactive.png`](outputs/screenshot_interactive.png) | Screenshot of the interactive map, for anywhere the HTML cannot be rendered. |
 | [`outputs/findings.md`](outputs/findings.md) | Written analysis of the major findings. Every figure is generated from the outputs, not typed in. |
 | [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM, documented street gradients and known flat corridors. |
 | `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered low-elevation corridors: street names, endpoints in lon/lat, neighborhoods connected, length, elevation range, gradient and importance metrics. |
@@ -220,6 +237,33 @@ regardless of usage, so the unavoidable climbs *out* of a corridor do not get
 absorbed into it. Contiguous high-scoring edges are then merged, short gaps
 are closed, and the result is labelled by its constituent street names.
 
+### Routing in the browser
+
+The interactive map ships the graph, not a set of answers. Earlier it carried
+~10,000 precomputed routes, which meant it could only speak about the 36
+neighborhood access points; embedding the graph itself turned out to be both
+*smaller* and far more useful.
+
+The packing is in [`sf_flat_routes/webgraph.py`](sf_flat_routes/webgraph.py):
+69,864 nodes, 160,608 directed arcs, 87,776 edge geometries and the vector
+overlays are quantised into typed arrays, concatenated into one buffer,
+gzipped and base64-encoded once. The browser inflates it with
+`DecompressionStream` and takes `TypedArray` views straight onto the result —
+no JSON number parsing. 18.4 MB of raw arrays compress to 4.6 MB, so the
+whole self-contained page is **6.5 MB and interactive in under four
+seconds**, against 19.3 MB for the precomputed version.
+
+Routing is a Dijkstra over a CSR adjacency with a flat binary heap and a
+visit-stamp array, so nothing is reallocated between searches. It settles a
+cross-city route in **about 9 ms** (61 ms worst case observed), which is what
+makes the weight sliders feel live. The cost function is a line-for-line
+mirror of `routing.edge_costs`, including the per-class comfort multipliers
+and the flag that disables them for the `shortest` objective.
+
+The street network is painted directly onto a canvas from the packed arrays,
+with viewport culling and a zoom-dependent minimum edge length. 88,000
+individual Leaflet polylines would not have been usable; one canvas pass is.
+
 ### Passes and barriers
 
 "How much climbing is unavoidable between these two parts of the city?" is a
@@ -339,23 +383,36 @@ grade_averse      6.38       349      174    7.0       3       0   +25% dist,   
 balanced          6.20       345      170    7.0      29       0   +21% dist,   +785 ft climb
 ```
 
-A full clean run takes about **6 minutes** on 4 cores and completes with no
-warnings: ~55 s to download and cache 725 MB of source data, ~1 m 40 s to
-build the street graph and sample 1.6 M elevation points, ~30 s for the
-routing analysis (10,080 routes), ~15 s to validate, and ~2 m 35 s to render
+A full clean run takes about **4.5 minutes** on 4 cores and completes with no
+warnings at all: ~55 s to download and cache 725 MB of source data, ~1 m 40 s
+to build the street graph and sample 1.6 M elevation points, ~30 s for the
+routing analysis (10,080 routes), ~15 s to validate, and ~1 m 15 s to render
 the maps. Re-running any stage from cache is near-instant.
 
 ### Tests
 
 ```bash
-python -m pytest tests/ -q             # 93 tests
+python -m pytest tests/ -q             # 109 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,
 additivity, exact directional symmetry), directional edge costs, the routing
 cost model, access-rule interpretation, the minimax pass algorithm, corridor
-scoring, and polyline/hillshade helpers — plus integration tests that assert
-the model's invariants against the real processed data.
+scoring, payload quantisation and bundling, and hillshade/geometry helpers —
+plus integration tests that assert the model's invariants against the real
+processed data.
+
+`tests/test_webmap.py` goes further and drives the built map in headless
+Chromium, handing the JavaScript router the exact arc sequences Python chose.
+It asserts that the browser's metrics match Python's on an identical path,
+and that the route the browser finds for itself is never more expensive under
+its own cost model. It skips itself unless Playwright, a Chromium build and a
+built map are all present:
+
+```bash
+pip install -e ".[dev]" && playwright install chromium
+python -m sf_flat_routes map && python -m pytest tests/test_webmap.py -q
+```
 
 ## Project structure
 
@@ -374,7 +431,9 @@ sf_flat_routes/
   passes.py           minimax passes, lowland basins, barriers
   validate.py         checks against known ground truth
   viz_static.py       publication maps (matplotlib + lidar hillshade)
-  viz_interactive.py  self-contained Leaflet map with routing UI
+  webgraph.py         packs the graph into a compressed browser payload
+  viz_interactive.py  assembles the self-contained interactive map
+  web/                the map's own HTML, CSS and JavaScript (router included)
   report.py           generates outputs/findings.md from the outputs
   pipeline.py         stage orchestration
   __main__.py         CLI
@@ -417,9 +476,13 @@ Beyond the two dataset substitutions above:
   60% plausibility ceiling. For a project about *flat* routes, clipping the
   peak of a 41% wall is a much cheaper error than inventing gradient on flat
   ground.
-- **The interactive map's routes are precomputed**, between neighborhood
-  access points only. It cannot route from an arbitrary clicked point,
-  because a static HTML file cannot run Dijkstra.
+- **The interactive map quantises the graph** to keep the file small:
+  lengths and steep distances to 5 cm, climbing to 1 cm, gradients to 0.01%.
+  Route totals therefore drift from the Python figures by a few tens of
+  centimetres over a long route, and where two routes tie on cost the browser
+  may pick the other one. `tests/test_webmap.py` asserts both that the
+  browser's metrics match Python's on an identical path and that its own
+  route is never more expensive.
 - **Treasure Island / Yerba Buena Island** are excluded from pair routing:
   they are part of San Francisco but have no pedestrian access across the
   western span of the Bay Bridge.
