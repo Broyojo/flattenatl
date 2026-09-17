@@ -64,10 +64,10 @@ corridors the analysis discovered. The route threads between them.
   Wiggle–Panhandle–Golden Gate Park chain (7.6 km) runs east–west. The
   analysis was not told either existed.
 - **The Wiggle emerges unprompted.** Asked for a flat bicycle route from
-  Market at Duboce to Haight at Masonic, the model returns the Wiggle: 0.4 m
-  of *excess* climbing against the shortest route's 19.0 m, for 2% more
-  distance. Both routes must gain the same 18 m; the Wiggle simply does not
-  waste any of it.
+  Market at Duboce to Haight at Masonic, the model returns the Wiggle. Both
+  routes must gain the same unavoidable 47 m; the shortest one throws away a
+  further 19.2 m of climbing getting there, the Wiggle only 5.9 m — for 0.4%
+  more distance.
 - **One pass dominates the city.** An unnamed path in Golden Gate Park at
   ~255 ft is the binding constraint for 119 of 630 neighborhood pairs — the
   lowest point on the ridge dividing the eastern flats from the ocean side.
@@ -138,15 +138,15 @@ rectifier redistributed climbing within a segment with errors reaching 51 m.
 - Against the independent USGS 1/3 arc-second DEM at 4,000 random points:
   mean difference −0.02 m, RMS 0.68 m, 98.5% within 2 m.
 - Against documented street gradients: 6 of 8 within 5 percentage points
-  (Filbert 32.9% vs 31.5%, Jones 31.1% vs 29.0%, 22nd Street 32.6% vs 31.5%,
-  Baden 34.5% vs 32%, Duboce 28.8% vs 27.5%). Of the two that miss, Nevada
-  Street is a *classification* issue — its published 35% pitch is tagged
-  `steps` in OpenStreetMap and measures 34.6% as a stairway — and Bradford
-  Street is smoothing attenuation, discussed under Limitations. The model was
-  not changed to fit either.
+  (Filbert 32.9% vs 31.5%, 22nd Street 32.6% vs 31.5%, Jones 31.1% vs 29.0%,
+  Prentiss 32.9% vs 37%, Baden 34.5% vs 32%, Duboce 28.8% vs 27.5%). Of the
+  two that miss, Nevada Street is a *classification* issue — its published
+  35% pitch is tagged `steps` in OpenStreetMap and measures 34.6% as a
+  stairway — and Bradford Street is smoothing attenuation, discussed under
+  Limitations. The model was not changed to fit either.
 - The Embarcadero and the Great Highway, the city's two genuinely level
-  corridors, come out at ~1.1 m of climbing per km. Jones Street comes out at
-  39 m/km. That is a 37× separation.
+  corridors, come out at 1.07 and 1.16 m of climbing per km. Jones Street
+  comes out at 39.5 m/km — a 37-fold separation.
 - Internal invariants asserted in the test suite: per-edge
   `gain − loss == net_change` holds to 0.0 for all 175,552 directed edges,
   and no node has an inconsistent elevation.
@@ -178,7 +178,7 @@ data rather than assumed:
   Mission Street** — ordinary surface streets with sidewalks. `trunk`
   therefore *cannot* be excluded from walking or cycling.
 - `motorway` is true grade-separated freeway and is excluded.
-- `steps` (2,722 edges, 36 km) is a real part of the pedestrian network and is
+- `steps` (2,652 edges, 35 km) is a real part of the pedestrian network and is
   **excluded outright for bicycles**. A route suitable for a pedestrian is
   emphatically not necessarily rideable.
 - `sidewalk` and `crosswalk` subclasses are excluded for both modes: travel is
@@ -294,8 +294,10 @@ point is the **street-length-weighted centre** of its network nodes — street
 length being a far better proxy for where journeys start than polygon area —
 snapped to the nearest qualifying intersection (degree ≥ 3, named street, of
 an ordinary urban class). The offset from the geometric centroid is recorded
-for audit; only Lakeshore (453 m, Lake Merced is water) and the Presidio
-(444 m) exceed 400 m.
+for audit: across both modes only two points exceed 400 m — Lakeshore at
+453 m, because most of that neighborhood is Lake Merced, and the Presidio at
+444 m for cycling, because its centroid sits in woodland off the rideable
+network.
 
 ## Data sources
 

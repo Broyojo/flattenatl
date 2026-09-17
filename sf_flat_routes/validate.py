@@ -440,14 +440,6 @@ def _write_report(dem, steep, flat, wiggle) -> None:
               f"Verdict: **{w['verdict']}**. The model reproduces the Wiggle "
               f"without being told it exists.", ""]
 
-    L += ["## 5. Notes on targets the model does *not* reproduce", "",
-          "- **Great Highway / western edge** measures as flat (0.8 m/km) but "
-          "is *not* selected as an important corridor. This is a legitimate "
-          "result, not a failure: the corridor metric rewards street that "
-          "connects neighborhood pairs, and the Great Highway runs along the "
-          "ocean edge with the city on only one side, so very few "
-          "neighborhood pairs have any reason to use it. It is flat but not "
-          "structurally useful.", ""]
 
     if wiggle:
         L += ["## 4. Does the model route the Wiggle?", "",
@@ -460,6 +452,19 @@ def _write_report(dem, steep, flat, wiggle) -> None:
                      f"{v['max_grade']:.1%} | "
                      f"{', '.join(v['wiggle_streets_used']) or '(none)'} |")
         L += [""]
+
+    L += ["## 5. Notes on targets the model does *not* reproduce", "",
+          "- **Great Highway / western edge** measures as flat (about "
+          "1 m/km) but is *not* selected as an important corridor. This is a "
+          "legitimate result, not a failure: the corridor metric rewards "
+          "street that connects neighborhood pairs, and the Great Highway "
+          "runs along the ocean edge with the city on only one side, so very "
+          "few neighborhood pairs have any reason to use it. It is flat but "
+          "not structurally useful.",
+          "- **Nevada Street** disagrees by 10 points because its published "
+          "pitch is a stairway in OpenStreetMap; see section 2.",
+          "- **Bradford Street** disagrees by 8 points because of the "
+          "smoothing chain; see section 2.", ""]
 
     VALIDATION_MD.parent.mkdir(parents=True, exist_ok=True)
     VALIDATION_MD.write_text("\n".join(L))

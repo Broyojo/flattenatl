@@ -56,10 +56,6 @@ The Wiggle is measured as a *route* rather than as a set of street names, becaus
 
 Both routes must gain the same 47 m. The shortest one throws away 19 m of extra climbing doing it; the flat one throws away 6 m. Verdict: **efficient climb**. The model reproduces the Wiggle without being told it exists.
 
-## 5. Notes on targets the model does *not* reproduce
-
-- **Great Highway / western edge** measures as flat (0.8 m/km) but is *not* selected as an important corridor. This is a legitimate result, not a failure: the corridor metric rewards street that connects neighborhood pairs, and the Great Highway runs along the ocean edge with the city on only one side, so very few neighborhood pairs have any reason to use it. It is flat but not structurally useful.
-
 ## 4. Does the model route the Wiggle?
 
 Bicycle routing from Market Street at Duboce to Haight Street at Masonic -- the trip the Wiggle exists to serve.
@@ -69,3 +65,9 @@ Bicycle routing from Market Street at Duboce to Haight Street at Masonic -- the 
 | shortest | 1783 m | 66.5 m | 15.5% | Haight Street, Waller Street, Webster Street |
 | balanced | 2413 m | 49.8 m | 9.7% | Fell Street, Haight Street, Pierce Street, Scott Street, Waller Street, Webster Street |
 | min_climb | 1790 m | 53.2 m | 13.1% | Haight Street, Pierce Street, Waller Street, Webster Street |
+
+## 5. Notes on targets the model does *not* reproduce
+
+- **Great Highway / western edge** measures as flat (about 1 m/km) but is *not* selected as an important corridor. This is a legitimate result, not a failure: the corridor metric rewards street that connects neighborhood pairs, and the Great Highway runs along the ocean edge with the city on only one side, so very few neighborhood pairs have any reason to use it. It is flat but not structurally useful.
+- **Nevada Street** disagrees by 10 points because its published pitch is a stairway in OpenStreetMap; see section 2.
+- **Bradford Street** disagrees by 8 points because of the smoothing chain; see section 2.
