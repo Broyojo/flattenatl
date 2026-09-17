@@ -308,7 +308,9 @@ def bundle(graph: dict, strings: dict[str, str]) -> dict:
         off += len(raw)
 
     flat = b"".join(blobs)
-    packed = gzip.compress(flat, compresslevel=9)
+    # mtime=0 keeps the output byte-reproducible; gzip otherwise stamps the
+    # current time into the header and the map churns on every rebuild
+    packed = gzip.compress(flat, compresslevel=9, mtime=0)
     log.info("  bundle: %.2f MB raw -> %.2f MB gzipped -> %.2f MB base64",
              len(flat) / 1e6, len(packed) / 1e6,
              len(packed) * 4 / 3 / 1e6)

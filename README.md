@@ -448,7 +448,9 @@ outputs/              deliverables
 ```
 
 Raw data is never written to; every expensive product is cached and
-recomputed only with `--force`.
+recomputed only with `--force`. Output is byte-reproducible: rebuilding the
+maps and reports from the same cached data produces identical files, so the
+repository does not churn on every run.
 
 ## Limitations
 

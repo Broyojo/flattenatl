@@ -238,7 +238,9 @@ def make_backbone_map(corridors, edges, neighborhoods, passes=None,
         _scalebar(ax, b)
         fig.tight_layout()
         fig.savefig(STATIC_PNG, bbox_inches="tight", facecolor=fig.get_facecolor())
-        fig.savefig(STATIC_PDF, bbox_inches="tight", facecolor=fig.get_facecolor())
+        # suppressing the PDF creation date keeps the output reproducible
+        fig.savefig(STATIC_PDF, bbox_inches="tight", facecolor=fig.get_facecolor(),
+                    metadata={"CreationDate": None})
         plt.close(fig)
     log.info("wrote %s and %s", STATIC_PNG.name, STATIC_PDF.name)
     return STATIC_PNG, STATIC_PDF
