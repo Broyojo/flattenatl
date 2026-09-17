@@ -31,13 +31,14 @@ the checks against known ground truth are in
 | [`outputs/sf_street_grades.png`](outputs/sf_street_grades.png) | Citywide street-gradient map. |
 | [`outputs/findings.md`](outputs/findings.md) | Written analysis of the major findings. Every figure is generated from the outputs, not typed in. |
 | [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM, documented street gradients and known flat corridors. |
-| `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered low-elevation corridors, with metrics. |
+| `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered low-elevation corridors: street names, endpoints in lon/lat, neighborhoods connected, length, elevation range, gradient and importance metrics. |
 | `outputs/neighborhood_pairs.csv` | 10,080 routes: every ordered neighborhood pair × 4 objectives × 2 modes, with full metrics. |
 | `outputs/pareto_frontier.csv` | Distance / climbing / peak-gradient trade-off frontiers. |
 | `outputs/passes.geojson` / `.csv`, `outputs/pass_matrix.csv` | Critical passes, and the lowest possible crossing elevation for every neighborhood pair. |
 | `outputs/barriers.geojson` / `.csv` | Steep streets that inter-neighborhood traffic cannot avoid. |
 | `outputs/lowland_basins.geojson` | The city's flat districts, delineated below 15 m. |
-| `data/processed/*.parquet`, `*.gpkg` | Processed street network with full per-edge and per-direction metrics. |
+| `data/processed/sf_street_network.gpkg` | Processed street network as a GeoPackage, ready to open in QGIS or ArcGIS: 87,776 edges with gradient, climbing and access attributes. |
+| `data/processed/edges_metrics.parquet`, `edges_directed.parquet` | The same network as Parquet, plus the full per-direction metric table (175,552 directed edges). |
 
 ## Headline findings
 

@@ -406,25 +406,45 @@ def attribute_corridors(corridors, neighborhoods):
 
 
 def corridor_endpoints(corridors):
-    """Describe each corridor's endpoints in lon/lat for the written report."""
+    """Add each corridor's two extreme endpoints, in lon/lat.
+
+    A corridor's extent is characterised by its two most widely separated
+    terminal points, which for a branching corridor is more informative than
+    the first and last vertex of whatever order the geometry happens to be
+    in.
+    """
+    from pyproj import Transformer
     from shapely.geometry import MultiLineString
+
+    if corridors.empty:
+        for c in ("end_a_lon", "end_a_lat", "end_b_lon", "end_b_lat"):
+            corridors[c] = []
+        return corridors
+
+    tr = Transformer.from_crs(corridors.crs, "EPSG:4326", always_xy=True)
     rows = []
     for _, r in corridors.iterrows():
         g = r.geometry
         if g is None or g.is_empty:
-            rows.append(("", "")); continue
+            rows.append((np.nan,) * 4)
+            continue
         if isinstance(g, MultiLineString):
-            pts = [c for line in g.geoms for c in (line.coords[0], line.coords[-1])]
+            pts = [c for line in g.geoms
+                   for c in (line.coords[0], line.coords[-1])]
         else:
             pts = [g.coords[0], g.coords[-1]]
-        arr = np.asarray(pts)
-        # the two most distant endpoints characterise the corridor's extent
+        arr = np.asarray(pts)[:, :2]
         d2 = ((arr[:, None, :] - arr[None, :, :]) ** 2).sum(-1)
         i, j = np.unravel_index(np.argmax(d2), d2.shape)
-        rows.append((tuple(arr[i]), tuple(arr[j])))
+        a = tr.transform(*arr[i])
+        b = tr.transform(*arr[j])
+        rows.append((round(a[0], 6), round(a[1], 6),
+                     round(b[0], 6), round(b[1], 6)))
     corridors = corridors.copy()
-    corridors["end_a"] = [r[0] for r in rows]
-    corridors["end_b"] = [r[1] for r in rows]
+    corridors["end_a_lon"] = [r[0] for r in rows]
+    corridors["end_a_lat"] = [r[1] for r in rows]
+    corridors["end_b_lon"] = [r[2] for r in rows]
+    corridors["end_b_lat"] = [r[3] for r in rows]
     return corridors
 
 
@@ -444,6 +464,7 @@ def run_corridor_analysis(graphs: dict, arc_store: dict, pairs_df: pd.DataFrame,
         all_scores.append(scored)
         cor = merge_corridors(scored, edges)
         cor = attribute_corridors(cor, neighborhoods)
+        cor = corridor_endpoints(cor)
         all_corridors.append(cor)
 
     scores = pd.concat(all_scores, ignore_index=True)

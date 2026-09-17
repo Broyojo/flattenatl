@@ -57,6 +57,8 @@ log = get_logger("sf_flat_routes.metrics")
 
 DIRECTED_PARQUET = PROCESSED_DIR / "edges_directed.parquet"
 UNDIRECTED_PARQUET = PROCESSED_DIR / "edges_metrics.parquet"
+#: GeoPackage mirror of the processed network, for use in desktop GIS.
+NETWORK_GPKG = PROCESSED_DIR / "sf_street_network.gpkg"
 
 
 # --------------------------------------------------------------------------
@@ -509,6 +511,18 @@ def compute_edge_metrics(edges, profiles: dict, force: bool = False):
 
     gdf.to_parquet(UNDIRECTED_PARQUET)
     directed.to_parquet(DIRECTED_PARQUET)
+    # A GeoPackage mirror so the processed network opens directly in QGIS or
+    # ArcGIS; list columns have no GeoPackage equivalent, so they are dropped.
+    try:
+        export = gdf.drop(columns=[c for c in gdf.columns
+                                   if gdf[c].dtype == object
+                                   and c not in ("cls", "subclass", "name",
+                                                 "segment_id", "u", "v",
+                                                 "bike_facility", "geometry")])
+        export.to_file(NETWORK_GPKG, layer="streets", driver="GPKG")
+        log.info("wrote %s (%d features)", NETWORK_GPKG.name, len(export))
+    except Exception as exc:                        # pragma: no cover
+        log.warning("could not write the GeoPackage mirror: %s", exc)
     log.info("wrote %s and %s", UNDIRECTED_PARQUET.name, DIRECTED_PARQUET.name)
     log.info("directed edges traversable: walk %d, bike %d",
              int(directed["walk_traversable"].sum()),
