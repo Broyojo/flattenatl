@@ -64,6 +64,29 @@
       </div>
       <button class="act" id="resetw">Reset to the selected preset</button>
 
+      <h2>The warped city</h2>
+      <p class="note">Redraw San Francisco so that distance on the page is
+      <em>climbing cost</em> instead of geography. Places separated by a
+      ridge move apart; places joined by a flat corridor pull together.</p>
+      <button class="act" id="warptoggle" aria-pressed="false">Show the warped city</button>
+      <div class="slider">
+        <div class="row"><span>Flatness weight &lambda;</span><b id="lab_lambda"></b></div>
+        <input type="range" id="sl_lambda" min="0" max="3" step="0.1">
+        <div class="note">0 is plain walking distance; 1 is the balanced
+        objective; higher values make hills loom larger. Keep it modest to
+        avoid absurd detours.</div>
+      </div>
+      <div class="slider">
+        <div class="row"><span>Morph</span><b id="lab_morph"></b></div>
+        <input type="range" id="sl_morph" min="0" max="1" step="0.02">
+      </div>
+      <div id="warpstate" hidden>
+        <div class="note" id="warpinfo"></div>
+        <div class="note">Street vertices, neighborhood outlines, corridors
+        and your route are all carried by the same deformation, so the route
+        you see is the route you would walk.</div>
+      </div>
+
       <h2>Layers</h2>
       <div class="layers" id="layers"></div>
 
@@ -77,7 +100,7 @@
       optional basemap tiles need a network connection.</p>
     </div>
   </div>
-  <div id="map"></div>
+  <div id="map"><div class="busy" id="busy">Warping the city&hellip;</div></div>
 </div>
 <script>/*__LEAFLET_JS__*/</script>
 <script>window.DATA = /*__DATA__*/;</script>

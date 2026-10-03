@@ -24,11 +24,14 @@ the checks against known ground truth are in
 
 ## The interactive map
 
-[`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) is a
-single 6.5 MB file that routes in your browser over the real graph — click any
-two points, switch between walking and cycling, choose an objective, or drag
-the cost weights and watch the route respond. Download it and open it; GitHub
-will not render a file this size inline.
+**Live: [claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC](https://claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC)**
+(private to its owner until shared).
+
+[`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) is the
+same page as a single 6.5 MB file that routes in your browser over the real
+graph — click any two points, switch between walking and cycling, choose an
+objective, or drag the cost weights and watch the route respond. Download it
+and open it; GitHub will not render a file this size inline.
 
 ![The interactive map](outputs/screenshot_interactive.png)
 
@@ -38,6 +41,38 @@ the shortest one. The red arcs are the streets steeper than 10% — they trace
 the city's hills like contours — and the thick pale blue lines are the flat
 corridors the analysis discovered. The route threads between them.
 
+### The warped city
+
+![San Francisco redrawn by climbing cost](outputs/screenshot_warped.png)
+
+The map can also redraw the city so that distance on the page means
+**climbing cost** rather than geography. Places separated by a ridge move
+apart; places joined by a flat corridor pull together. Twin Peaks drifts
+almost 5 km from where it sits, West of Twin Peaks 3 km, Glen Park 2 km, while
+Bernal Heights and Nob Hill barely move: they are hilly, but they are hilly
+*next to* the flats.
+
+The deformation is driven by the same cost model as the routes, with one
+knob: how many metres of walking a metre of climb is worth. At λ = 0 the
+page shows plain network distance (even then the Bay and the park bend
+things), λ = 1 is the balanced objective, and higher values make the hills
+loom larger; keeping it modest is what stops the routes becoming absurd. A
+morph slider runs the real city into the warped one.
+
+Method: about 175 anchor intersections (every neighborhood's access point plus
+a 1 km lattice snapped to routable nodes) get a full cost matrix from the
+in-page router; stress majorisation (SMACOF, unit weights) lays them out so
+page distance matches cost, starting from their true positions so the result
+is the least deformation that fits; a Procrustes fit turns and scales the
+layout back onto geography so north stays up; and a thin-plate spline through
+the anchors' displacements carries every street vertex, neighborhood outline,
+corridor and route along with it. The whole thing takes about three seconds
+in the browser, so the weight can be changed live.
+
+This was prompted by a friend's piece that redraws cities by travel time; the
+idea of warping a city by a non-geographic metric is theirs, the metric and
+the construction here are different.
+
 ## What it produces
 
 | Output | What it is |
@@ -46,6 +81,8 @@ corridors the analysis discovered. The route threads between them.
 | [`outputs/sf_flat_backbone.png`](outputs/sf_flat_backbone.png) / `.pdf` | Publication-quality static map of the low-elevation backbone, over a hillshade computed from the same lidar the analysis uses. |
 | [`outputs/sf_street_grades.png`](outputs/sf_street_grades.png) | Citywide street-gradient map. |
 | [`outputs/screenshot_interactive.png`](outputs/screenshot_interactive.png) | Screenshot of the interactive map, for anywhere the HTML cannot be rendered. |
+| [`outputs/sf_flat_routes_artifact.html`](outputs/sf_flat_routes_artifact.html) | The same map built for publishing as a Claude artifact: no document wrapper and no basemap tiles, since the artifact sandbox blocks image loads. |
+| [`outputs/screenshot_warped.png`](outputs/screenshot_warped.png) | Screenshot of the city warped by climbing cost. |
 | [`outputs/findings.md`](outputs/findings.md) | Written analysis of the major findings. Every figure is generated from the outputs, not typed in. |
 | [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM, documented street gradients and known flat corridors. |
 | `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered low-elevation corridors: street names, endpoints in lon/lat, neighborhoods connected, length, elevation range, gradient and importance metrics. |
@@ -435,7 +472,9 @@ sf_flat_routes/
   viz_static.py       publication maps (matplotlib + lidar hillshade)
   webgraph.py         packs the graph into a compressed browser payload
   viz_interactive.py  assembles the self-contained interactive map
-  web/                the map's own HTML, CSS and JavaScript (router included)
+  web/                the map's own HTML, CSS and JavaScript: the router
+                      (app.js) and the warped-city construction (warp.js)
+  sensitivity.py      rebuilds the pipeline under perturbed parameters
   report.py           generates outputs/findings.md from the outputs
   pipeline.py         stage orchestration
   __main__.py         CLI

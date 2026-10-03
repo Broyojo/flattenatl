@@ -219,6 +219,62 @@ class Graph {
     return { arcs, cost: dist[dst], settled };
   }
 
+  /* Costs from one source to a set of target nodes: the same search as
+   * route(), run until every target has settled. Used for the warp's cost
+   * matrix, where one source serves ~100 targets at a time. */
+  distances(src, mode, w, targets) {
+    const bit = this.modeBit(mode);
+    const mult = this.multipliers(mode, w);
+    const { dist, seen, done, indptr, head } = this;
+    const stamp = ++this.stamp;
+    const want = new Int32Array(this.n);
+    let remaining = 0;
+    for (const t of targets) { if (!want[t]) { want[t] = 1; remaining++; } }
+    let hk = this.heapKey, hv = this.heapVal, hn = 0;
+    const push = (key, val) => {
+      if (hn === hk.length) {
+        const nk = new Float64Array(hk.length * 2), nv = new Int32Array(hv.length * 2);
+        nk.set(hk); nv.set(hv); hk = this.heapKey = nk; hv = this.heapVal = nv;
+      }
+      let i = hn++; hk[i] = key; hv[i] = val;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (hk[p] <= hk[i]) break;
+        const tk = hk[p], tv = hv[p]; hk[p] = hk[i]; hv[p] = hv[i]; hk[i] = tk; hv[i] = tv; i = p;
+      }
+    };
+    const pop = () => {
+      const top = hv[0], topk = hk[0]; hn--;
+      if (hn > 0) {
+        hk[0] = hk[hn]; hv[0] = hv[hn];
+        let i = 0;
+        for (;;) {
+          const l = 2 * i + 1, r = l + 1; let m = i;
+          if (l < hn && hk[l] < hk[m]) m = l;
+          if (r < hn && hk[r] < hk[m]) m = r;
+          if (m === i) break;
+          const tk = hk[m], tv = hv[m]; hk[m] = hk[i]; hv[m] = hv[i]; hk[i] = tk; hv[i] = tv; i = m;
+        }
+      }
+      return [topk, top];
+    };
+    seen[src] = stamp; dist[src] = 0; done[src] = 0; push(0, src);
+    while (hn > 0 && remaining > 0) {
+      const [dv, u] = pop();
+      if (seen[u] !== stamp || done[u]) continue;
+      done[u] = 1;
+      if (want[u]) remaining--;
+      for (let a = indptr[u]; a < indptr[u + 1]; a++) {
+        if ((this.arcFlags[a] & bit) === 0) continue;
+        const v = head[a];
+        if (seen[v] === stamp && done[v]) continue;
+        const nd = dv + this.arcCost(a, w, mult);
+        if (seen[v] !== stamp || nd < dist[v]) { seen[v] = stamp; dist[v] = nd; done[v] = 0; push(nd, v); }
+      }
+    }
+    return targets.map(t => (seen[t] === stamp && done[t]) ? dist[t] : Infinity);
+  }
+
   /* Arc index for an (edge id, reversed) pair. Built on first use; the map
    * itself does not need it, but it makes the router addressable from tests
    * and from the console. */
@@ -504,12 +560,16 @@ const NetworkLayer = L.Layer.extend({
     const minLen = z >= 15 ? 0 : (z >= 14 ? 8 : (z >= 13 ? 16 : 26));
     const g = this.geom;
     const origin = map.latLngToLayerPoint(nw);
+    // under a warp the vertices move; culling by the geographic bbox would
+    // then be wrong, so cull only when drawing the real city
+    const coords = this.altCoords || g.coords;
+    const cull = !this.altCoords;
 
     const byBucket = [[], [], [], [], [], []];
     for (let i = 0; i < g.nEdges; i++) {
       const o = i * 4;
-      if (g.bbox[o + 2] < west || g.bbox[o] > east
-        || g.bbox[o + 3] < south || g.bbox[o + 1] > north) continue;
+      if (cull && (g.bbox[o + 2] < west || g.bbox[o] > east
+        || g.bbox[o + 3] < south || g.bbox[o + 1] > north)) continue;
       if (minLen && g.len[i] / g.DM < minLen) continue;
       byBucket[g.bucket[i]].push(i);
     }
@@ -529,7 +589,7 @@ const NetworkLayer = L.Layer.extend({
       for (const i of list) {
         const s = g.starts[i], e = g.starts[i + 1];
         for (let k = s; k < e; k += 2) {
-          const p = map.latLngToLayerPoint([g.coords[k + 1], g.coords[k]]);
+          const p = map.latLngToLayerPoint([coords[k + 1], coords[k]]);
           const x = p.x - origin.x, y = p.y - origin.y;
           if (k === s) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
@@ -609,7 +669,8 @@ const App = {
     };
     this.map = map;
     L.control.scale({ imperial: true, metric: true }).addTo(map);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png", {
+    if (this.DATA.basemap !== false) this.tiles = L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png", {
       subdomains: "abc", maxZoom: 19, opacity: 0.5, crossOrigin: true,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         + ' contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>'
@@ -726,6 +787,7 @@ const App = {
 
   /* --------------------------------------------------------------- input */
   onMapClick(e) {
+    if (this.warpOn) return;            // the warped page is not a place to click
     const { lat, lng } = e.latlng;
     const bit = this.graph.modeBit(this.state.mode);
     const node = this.nodeGrid.nearest(lng, lat,
@@ -811,15 +873,14 @@ const App = {
 
     const sum = this.graph.summarise(r.arcs);
     const shSum = sh ? this.graph.summarise(sh.arcs) : null;
-    const line = this.graph.geometry(r.arcs, this.geom);
-    this.routeHalo.setLatLngs(line); this.routeLine.setLatLngs(line);
-    this.cmpLine.setLatLngs(
-      sh && this.state.profile !== "shortest" && !this.state.custom
-        ? this.graph.geometry(sh.arcs, this.geom) : []);
+    this.lastRoute = { line: this.graph.geometry(r.arcs, this.geom),
+                       cmp: sh && this.state.profile !== "shortest" && !this.state.custom
+                         ? this.graph.geometry(sh.arcs, this.geom) : [] };
+    this.drawRouteLines();
 
     this.marks.clearLayers();
     const mk = (node, colour, label) => L.circleMarker(
-      [this.graph.nodeLat(node), this.graph.nodeLon(node)],
+      this.place(this.graph.nodeLat(node), this.graph.nodeLon(node)),
       { radius: 7, color: "#04121a", weight: 2, fillColor: colour, fillOpacity: 1 })
       .bindPopup(`<b>${label}</b><br>${this.graph.nodeZ(node).toFixed(1)} m `
         + `(${Math.round(this.graph.nodeZ(node) * FT)} ft)`);
@@ -828,6 +889,23 @@ const App = {
 
     this.renderResult(sum, shSum, ms, r.settled);
     this.drawProfile(sum);
+    if (this.warpOn) this.map.fitBounds(L.latLngBounds(this.routeLine.getLatLngs()).pad(0.08));
+  },
+
+  /* a lat/lon as currently displayed: warped and morphed, or as it is */
+  place(lat, lon) {
+    if (!this.warpOn || !this.warp) return [lat, lon];
+    const [wlon, wlat] = this.warp.transform(lon, lat);
+    const t = this.warpT;
+    return [lat + (wlat - lat) * t, lon + (wlon - lon) * t];
+  },
+
+  drawRouteLines() {
+    if (!this.lastRoute) return;
+    const w = pts => pts.map(ll => this.place(ll[0], ll[1]));
+    this.routeHalo.setLatLngs(w(this.lastRoute.line));
+    this.routeLine.setLatLngs(w(this.lastRoute.line));
+    this.cmpLine.setLatLngs(w(this.lastRoute.cmp));
   },
 
   renderResult(sum, sh, ms, settled) {
@@ -1112,3 +1190,176 @@ window.addEventListener("DOMContentLoaded", () => {
     throw err;
   });
 });
+
+/* ------------------------------------------------------------ the warp */
+Object.assign(App, {
+  warpOn: false, warpT: 1.0, warpLambda: 1.0, warp: null, warpCache: {},
+
+  warpWeights() {
+    const base = this.meta.profiles.balanced;
+    const lam = this.warpLambda;
+    return Object.assign({}, base, {
+      alpha: base.alpha * lam, beta: base.beta * lam, gamma: base.gamma * lam,
+      use_class_multiplier: lam > 0,
+    });
+  },
+
+  ensureWarp() {
+    const key = `${this.state.mode}|${this.warpLambda}`;
+    if (!this.warpCache[key]) {
+      this.warpCache[key] = Warp.build(this, this.state.mode, this.warpWeights());
+      const w = this.warpCache[key];
+      w.coords = Warp.warpCoords(this.geom.coords, w.transform);
+      w.neighborhoods = Warp.warpGeoJSON(this.DATA.layers.neighborhoods, w.transform);
+      w.corridors = this.DATA.layers.corridors
+        ? Warp.warpGeoJSON(this.DATA.layers.corridors, w.transform) : null;
+    }
+    this.warp = this.warpCache[key];
+    return this.warp;
+  },
+
+  /* lerp between the real and the warped city */
+  warpedCoords() {
+    const w = this.warp, t = this.warpT, src = this.geom.coords;
+    if (t >= 1) return w.coords;
+    if (!this._lerp || this._lerp.length !== src.length) this._lerp = new Float32Array(src.length);
+    const out = this._lerp;
+    for (let k = 0; k < src.length; k++) out[k] = src[k] + (w.coords[k] - src[k]) * t;
+    return out;
+  },
+
+  applyWarpView() {
+    const on = this.warpOn;
+    document.getElementById("warpstate").hidden = !on;
+    if (on) {
+      const busy = document.getElementById("busy");
+      busy.classList.add("on");
+      // let the busy notice paint before the (synchronous) build
+      setTimeout(() => {
+        try {
+          this.ensureWarp();
+          this.network.altCoords = this.warpedCoords();
+          this.network._redraw();
+          this.redrawWarpedOverlays();
+          this.drawRouteLines();
+          this.renderWarpReadout();
+          if (this.tiles) this.tiles.setOpacity(0);
+          for (const key of ["passes", "barriers", "basins", "bike_network", "low_stress"]) {
+            if (this.overlays[key] && this.map.hasLayer(this.overlays[key])) {
+              this.map.removeLayer(this.overlays[key]);
+              const chk = document.getElementById("chk_" + key);
+              if (chk) chk.checked = false;
+            }
+          }
+          if (this.overlays.neighborhoods && this.map.hasLayer(this.overlays.neighborhoods)) {
+            this.map.removeLayer(this.overlays.neighborhoods);
+          }
+          if (this.overlays.corridors && this.map.hasLayer(this.overlays.corridors)) {
+            this.map.removeLayer(this.overlays.corridors);
+          }
+        } finally {
+          busy.classList.remove("on");
+        }
+      }, 30);
+    } else {
+      this.network.altCoords = null;
+      this.network._redraw();
+      if (this.warpLayers) { this.warpLayers.forEach(l => this.map.removeLayer(l)); this.warpLayers = null; }
+      if (this.tiles) this.tiles.setOpacity(0.5);
+      const chkN = document.getElementById("chk_neighborhoods");
+      if (this.overlays.neighborhoods && chkN && chkN.checked) this.overlays.neighborhoods.addTo(this.map);
+      const chkC = document.getElementById("chk_corridors");
+      if (this.overlays.corridors && chkC && chkC.checked) this.overlays.corridors.addTo(this.map);
+      this.drawRouteLines();
+      this.raise();
+    }
+    this.syncPickButtons();
+  },
+
+  redrawWarpedOverlays() {
+    if (this.warpLayers) this.warpLayers.forEach(l => this.map.removeLayer(l));
+    const lerpGJ = gj => Warp.warpGeoJSON(gj, (lon, lat) => {
+      const p = this.place(lat, lon); return [p[1], p[0]];
+    });
+    const layers = [];
+    layers.push(L.geoJSON(lerpGJ(this.DATA.layers.neighborhoods), {
+      style: () => ({ color: "#aab6c2", weight: 1.3, opacity: 0.85, fill: false, dashArray: "4,3" }),
+      onEachFeature: (f, l) => l.bindPopup(this.popupHTML("neighborhoods", f.properties)),
+    }).addTo(this.map));
+    if (this.DATA.layers.corridors) {
+      layers.push(L.geoJSON(lerpGJ(this.DATA.layers.corridors), {
+        style: f => ({ color: f.properties.mode === "bike" ? "#9be7ff" : "#2c7bb6",
+                       weight: 3.6, opacity: 0.9, lineCap: "round" }),
+        onEachFeature: (f, l) => l.bindPopup(this.popupHTML("corridors", f.properties)),
+      }).addTo(this.map));
+    }
+    // neighborhood names, so the deformation can be read
+    const pts = this.DATA.points[this.state.mode] || {};
+    const labels = L.layerGroup();
+    for (const name of Object.keys(pts)) {
+      const [lon, lat] = pts[name];
+      const ll = this.place(lat, lon);
+      L.marker(ll, { icon: L.divIcon({ className: "nblabel", html: name, iconSize: null }),
+                     interactive: false }).addTo(labels);
+    }
+    layers.push(labels.addTo(this.map));
+    this.warpLayers = layers;
+    this.raise();
+  },
+
+  renderWarpReadout() {
+    const w = this.warp;
+    if (!w) return;
+    const a = this.meta.profiles.balanced.alpha * this.warpLambda;
+    document.getElementById("warpinfo").innerHTML =
+      `<div><b>${a.toFixed(0)} m</b> of walking per metre of climb &middot; `
+      + `${w.anchors} anchors &middot; stress ${(100 * w.stress).toFixed(1)}% &middot; `
+      + `mean shift ${Math.round(w.meanShiftM).toLocaleString()} m &middot; `
+      + `${w.ms.toFixed(0)} ms</div>`;
+  },
+
+  bindWarpUI() {
+    const toggle = document.getElementById("warptoggle");
+    toggle.onclick = () => {
+      this.warpOn = !this.warpOn;
+      toggle.setAttribute("aria-pressed", String(this.warpOn));
+      toggle.textContent = this.warpOn ? "Show the real city" : "Show the warped city";
+      this.applyWarpView();
+    };
+    const lam = document.getElementById("sl_lambda");
+    const lamLab = document.getElementById("lab_lambda");
+    lam.value = this.warpLambda; lamLab.textContent = this.warpLambda.toFixed(1);
+    lam.oninput = () => { lamLab.textContent = (+lam.value).toFixed(1); };
+    lam.onchange = () => {
+      this.warpLambda = parseFloat(lam.value);
+      if (this.warpOn) this.applyWarpView();
+    };
+    const morph = document.getElementById("sl_morph");
+    const morphLab = document.getElementById("lab_morph");
+    morph.value = this.warpT; morphLab.textContent = Math.round(this.warpT * 100) + "%";
+    morph.oninput = () => {
+      this.warpT = parseFloat(morph.value);
+      morphLab.textContent = Math.round(this.warpT * 100) + "%";
+      if (!this.warpOn || !this.warp) return;
+      this.network.altCoords = this.warpedCoords();
+      this.network._redraw();
+      this.redrawWarpedOverlays();
+      this.drawRouteLines();
+    };
+  },
+});
+
+// the warp controls exist only once the page has its graph
+const _origStart = App.start;
+App.start = async function (DATA) {
+  await _origStart.call(this, DATA);
+  this.bindWarpUI();
+  const prevSync = this.syncPickButtons.bind(this);
+  this.syncPickButtons = () => {
+    prevSync();
+    if (this.warpOn) {
+      document.getElementById("pickhint").textContent =
+        "Map clicks are off while the city is warped. Choose neighborhoods from the menus.";
+    }
+  };
+};

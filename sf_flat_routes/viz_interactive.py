@@ -31,6 +31,10 @@ from .utils import get_logger, human_bytes, step
 log = get_logger("sf_flat_routes.viz_interactive")
 
 INTERACTIVE_HTML = OUTPUT_DIR / "sf_flat_routes_map.html"
+#: Variant for publishing as a Claude artifact: no document wrapper (the
+#: host supplies it) and no basemap tiles (the artifact sandbox blocks image
+#: loads from other hosts). Everything else is identical.
+ARTIFACT_HTML = OUTPUT_DIR / "sf_flat_routes_artifact.html"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 
@@ -180,6 +184,24 @@ def _vendor(name: str) -> str:
     return (VENDOR_DIR / name).read_text(encoding="utf-8")
 
 
+def _render(payload: dict, artifact: bool) -> str:
+    import re
+    html = _asset("index.html")
+    html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
+    html = html.replace("/*__APP_CSS__*/", _asset("app.css"))
+    html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
+    html = html.replace("/*__APP_JS__*/", _asset("app.js") + "\n" + _asset("warp.js"))
+    if artifact:
+        payload = dict(payload, basemap=False)
+    html = html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
+    if artifact:
+        head = re.search(r"<head>(.*?)</head>", html, re.S).group(1)
+        body = re.search(r"<body>(.*?)</body>", html, re.S).group(1)
+        head = re.sub(r"<meta[^>]*>\s*", "", head)
+        html = head.strip() + "\n" + body.strip() + "\n"
+    return html
+
+
 def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
                          arc_store=None, basins=None) -> Path:
     """Assemble and write the interactive map.
@@ -215,15 +237,10 @@ def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
     }
 
     with step("writing the interactive HTML", log):
-        html = _asset("index.html")
-        html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
-        html = html.replace("/*__APP_CSS__*/", _asset("app.css"))
-        html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
-        html = html.replace("/*__APP_JS__*/", _asset("app.js"))
-        html = html.replace("/*__DATA__*/",
-                            json.dumps(payload, separators=(",", ":")))
         INTERACTIVE_HTML.parent.mkdir(parents=True, exist_ok=True)
-        INTERACTIVE_HTML.write_text(html, encoding="utf-8")
-    log.info("wrote %s (%s)", INTERACTIVE_HTML.name,
-             human_bytes(INTERACTIVE_HTML.stat().st_size))
+        INTERACTIVE_HTML.write_text(_render(payload, artifact=False), encoding="utf-8")
+        ARTIFACT_HTML.write_text(_render(payload, artifact=True), encoding="utf-8")
+    log.info("wrote %s (%s) and %s (%s)", INTERACTIVE_HTML.name,
+             human_bytes(INTERACTIVE_HTML.stat().st_size), ARTIFACT_HTML.name,
+             human_bytes(ARTIFACT_HTML.stat().st_size))
     return INTERACTIVE_HTML

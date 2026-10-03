@@ -170,6 +170,45 @@ _BROWSER_SCRIPT = """(ref) => {
 }"""
 
 
+@pytest.fixture(scope="module")
+def warp_result():
+    """Build the warped city in the browser and report its diagnostics."""
+    from playwright.sync_api import sync_playwright
+    exe = _chromium()
+    errors: list = []
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(executable_path=exe,
+                                         args=["--no-sandbox", "--disable-gpu"])
+        except Exception as exc:                            # pragma: no cover
+            pytest.skip(f"no usable Chromium: {exc}")
+        page = browser.new_page(viewport={"width": 1400, "height": 900})
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(INTERACTIVE_HTML.resolve().as_uri(), wait_until="load",
+                  timeout=240_000)
+        page.wait_for_function("window.App && window.App.graph", timeout=240_000)
+        page.click("#warptoggle")
+        page.wait_for_function(
+            "App.warp && !document.getElementById('busy').classList.contains('on')",
+            timeout=180_000)
+        out = page.evaluate("""() => {
+            const f = Warp.frame(37.76, -122.44), pts = App.DATA.points.walk, shift = {};
+            for (const n of Object.keys(pts)) {
+                const [lon, lat] = pts[n];
+                const [wlon, wlat] = App.warp.transform(lon, lat);
+                const a = f.toXY(lon, lat), b = f.toXY(wlon, wlat);
+                shift[n] = Math.hypot(a[0] - b[0], a[1] - b[1]);
+            }
+            const c = App.network.altCoords;
+            let finite = true;
+            for (let i = 0; i < c.length; i++) if (!Number.isFinite(c[i])) { finite = false; break; }
+            return {anchors: App.warp.anchors, stress: App.warp.stress,
+                    ms: App.warp.ms, shift, finite, n: c.length};
+        }""")
+        browser.close()
+    return out, errors
+
+
 # --------------------------------------------------------------------- tests
 def test_the_page_loads_without_javascript_errors(browser_results):
     _out, _info, errors = browser_results
@@ -237,3 +276,27 @@ def test_most_routes_are_identical_not_merely_equivalent(browser_results):
     assert same >= 0.6 * len(out), (
         f"only {same}/{len(out)} arc sequences matched exactly, which "
         "suggests a cost-model difference rather than tie-breaking")
+
+
+def test_the_warp_builds_without_errors(warp_result):
+    out, errors = warp_result
+    assert not errors, errors[:3]
+    assert out["finite"] and out["n"] > 0
+
+
+def test_the_warp_fits_the_cost_matrix_reasonably(warp_result):
+    """Stress is the residual between page distance and climbing cost."""
+    out, _ = warp_result
+    assert 100 <= out["anchors"] <= 400
+    assert out["stress"] < 0.25, f"stress {out['stress']:.3f} is too high to read"
+
+
+def test_hilly_neighborhoods_move_more_than_flat_ones(warp_result):
+    """The whole point: a ridge pushes places apart; the flats stay put."""
+    out, _ = warp_result
+    s = out["shift"]
+    hilly = max(s.get("Twin Peaks", 0), s.get("West of Twin Peaks", 0))
+    flat = min(s.get("Mission", 1e9), s.get("South of Market", 1e9),
+               s.get("Financial District", 1e9))
+    assert hilly > 2 * flat, f"hilly {hilly:.0f} m vs flat {flat:.0f} m"
+    assert hilly > 1500
