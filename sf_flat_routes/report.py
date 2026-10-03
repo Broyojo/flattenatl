@@ -435,6 +435,16 @@ def _modes(d) -> list[str]:
     return L
 
 
+def _top_corridor_phrase(sd: pd.DataFrame) -> str:
+    """'the top corridor is X in every run', or an honest count."""
+    leads = sd["top_corridor"].fillna("").map(lambda v: v.split(" - ")[0])
+    counts = leads.value_counts()
+    top, n = counts.index[0], int(counts.iloc[0])
+    if n == len(sd):
+        return f"the top corridor is {top} in every run"
+    return f"the top corridor is {top} in {n} of {len(sd)} runs"
+
+
 def _robustness(d) -> list[str]:
     """Summarise the sensitivity analysis, if it has been run."""
     path = OUTPUT_DIR / "sensitivity.csv"
@@ -461,9 +471,12 @@ def _robustness(d) -> list[str]:
          f"| Grade-averse: mean steepest pitch | {base['grade_averse_max_grade_pct']:.1f}% | "
          f"{others['grade_averse_max_grade_pct'].min():.1f}% to "
          f"{others['grade_averse_max_grade_pct'].max():.1f}% |",
-         f"| Top-12 corridor overlap with baseline | 100% | "
-         f"{others['top12_overlap_pct'].min():.0f}% to "
-         f"{others['top12_overlap_pct'].max():.0f}% |",
+         f"| Corridor material shared with baseline (by length) | 100% | "
+         f"{others['edge_overlap_pct'].min():.0f}% to "
+         f"{others['edge_overlap_pct'].max():.0f}% |",
+         f"| Lead streets of the top 12 corridors kept | 12 of 12 | "
+         f"{int(others['lead_streets_shared'].min())} to "
+         f"{int(others['lead_streets_shared'].max())} of 12 |",
          f"| Dominant pass | {base['top_pass_nbhd']}, {base['top_pass_ft']:.0f} ft | "
          f"same location in {int((sd['top_pass_nbhd'] == base['top_pass_nbhd']).sum())} "
          f"of {len(sd)} runs; {others['top_pass_ft'].min():.0f}-"
@@ -479,15 +492,29 @@ def _robustness(d) -> list[str]:
          f"{others['grade_Filbert Street'].min():.1f}% to "
          f"{others['grade_Filbert Street'].max():.1f}% |",
          ""]
-    # name the perturbation that moves the headline most
     dev = (others["min_climb_gain_saved_pct"] - base["min_climb_gain_saved_pct"]).abs()
     worst = dev.idxmax()
-    L += [f"The perturbation that moves the headline most is **{worst}** "
-          f"({others.loc[worst, 'change']}), at "
+    least = others["edge_overlap_pct"].idxmin()
+    drifters = sorted({s for v in others["lead_streets_new"].fillna("")
+                       for s in str(v).split("; ") if s})
+    L += [f"The headline barely moves: the perturbation that shifts it most "
+          f"is **{worst}** ({others.loc[worst, 'change']}), at "
           f"{others.loc[worst, 'min_climb_gain_saved_pct']:.0f}% climbing "
-          f"avoided against {base['min_climb_gain_saved_pct']:.0f}% at baseline. "
-          "Nothing in the grid changes which corridors matter, where the "
-          "dominant pass is, or whether the Wiggle wins.", ""]
+          f"avoided against {base['min_climb_gain_saved_pct']:.0f}% at "
+          f"baseline. The dominant pass and the Wiggle result hold in every "
+          f"run.", "",
+          f"The corridors are where the model is least rigid, and it is "
+          f"worth being precise about how. The *street* that qualifies as "
+          f"corridor material is {others['edge_overlap_pct'].min():.0f}-"
+          f"{others['edge_overlap_pct'].max():.0f}% the same by length, and "
+          f"{_top_corridor_phrase(sd)}; what changes "
+          f"is where each corridor is cut and therefore what it is called, "
+          f"most under the profile smoothing window (**{least}**, "
+          f"{others['edge_overlap_pct'].min():.0f}%). A handful of "
+          f"borderline streets drift in and out of the top twelve "
+          f"({', '.join(drifters)}): these are real corridors whose rank "
+          f"depends on tenths of a percent of gradient, not artefacts, and "
+          f"they should be read as a tier rather than a ranking.", ""]
     return L
 
 

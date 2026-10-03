@@ -87,7 +87,8 @@ the construction here are different.
 | [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM, documented street gradients and known flat corridors. |
 | `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered low-elevation corridors: street names, endpoints in lon/lat, neighborhoods connected, length, elevation range, gradient and importance metrics. |
 | `outputs/neighborhood_pairs.csv` | 10,080 routes: every ordered neighborhood pair × 4 objectives × 2 modes, with full metrics. |
-| `outputs/pareto_frontier.csv` | Distance / climbing / peak-gradient trade-off frontiers. |
+| `outputs/pareto_frontier.csv` | Distance / climbing / peak-gradient trade-off frontiers for every ordered pair. |
+| [`outputs/sensitivity.md`](outputs/sensitivity.md) / `.csv` | Every finding recomputed under ten perturbations of the elevation parameters and access points. |
 | `outputs/passes.geojson` / `.csv`, `outputs/pass_matrix.csv` | Critical passes, and the lowest possible crossing elevation for every neighborhood pair. |
 | `outputs/barriers.geojson` / `.csv` | Steep streets that inter-neighborhood traffic cannot avoid. |
 | `outputs/lowland_basins.geojson` | The city's flat districts, delineated below 15 m. |
@@ -187,6 +188,21 @@ rectifier redistributed climbing within a segment with errors reaching 51 m.
 - Internal invariants asserted in the test suite: per-edge
   `gain − loss == net_change` holds to 0.0 for all 175,552 directed edges,
   and no node has an inconsistent elevation.
+
+**Sensitivity** (`python -m sf_flat_routes sensitivity`; tables in
+[`outputs/sensitivity.md`](outputs/sensitivity.md)). The whole pipeline was
+rebuilt under ten one-at-a-time changes to the elevation parameters (sample
+spacing 2.5/10 m, smoothing window 12.5/50 m, dead-band 0.25/1 m, spatial
+pre-filter 0/6 m) and to which intersection stands in for each neighborhood
+(second- and third-nearest). The headline moves from +14% / 39% to at most
++15% / 40%; the dominant pass is the same Golden Gate Park crossing at 255 ft
+in all eleven runs; the Wiggle wins in all eleven. The corridors are the least
+rigid part: the street that qualifies as corridor material is 71–99% the same
+by length, and 8–12 of the top twelve lead streets keep their place, but
+where each corridor is cut, and so what it is called, shifts — most under the
+smoothing window — and a handful of borderline streets (Market, Divisadero,
+24th, Greenwich among them) drift in and out of the top twelve. They should be
+read as a tier, not a ranking.
 
 ### Street network
 

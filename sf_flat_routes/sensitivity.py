@@ -199,14 +199,58 @@ def _jaccard(a: list, b: list) -> float:
     return len(sa & sb) / len(sa | sb) if (sa | sb) else 1.0
 
 
+def _corridor_material(tag: str) -> dict | None:
+    """Edge id -> length for the edges that qualified as corridor material.
+
+    Reconstructed from the run's edge scores with the same quantile cut the
+    corridor merger uses. ``None`` if the run directory is not available.
+    """
+    path = RUNS_DIR / tag / "processed" / "edge_corridor_scores.parquet"
+    if not path.exists():
+        return None
+    s = pd.read_parquet(path)
+    s = s[s["mode"] == "walk"]
+    pos = s[s["score"] > 0]
+    if pos.empty:
+        return {}
+    cut = float(np.quantile(pos["score"], ANALYSIS.corridor_score_quantile))
+    top = s[s["score"] >= cut]
+    return dict(zip(top["edge_id"].astype(int), top["length_m"].astype(float)))
+
+
+def _edge_overlap(a: dict | None, b: dict | None) -> float:
+    """Length-weighted Jaccard of two corridor-material edge sets, in %.
+
+    Comparing corridor *names* is brittle: a merge boundary moving by one
+    block renames a corridor, so two runs that agree on almost every metre
+    of street can share no names at all. Comparing the edges themselves is
+    what the question actually asks.
+    """
+    if a is None or b is None:
+        return float("nan")
+    inter = sum(l for e, l in a.items() if e in b)
+    union = sum(a.values()) + sum(l for e, l in b.items() if e not in a)
+    return 100.0 * inter / union if union else 100.0
+
+
+def _lead_streets(names: list) -> set:
+    """The leading street of each corridor name, e.g. 'Valencia Street'."""
+    return {n.split(" - ")[0] for n in names if n}
+
+
 def _write(df: pd.DataFrame) -> None:
     why = {tag: w for tag, _o, w in GRID}
     base = df.loc["baseline"] if "baseline" in df.index else None
     df = df.copy()
     df["change"] = [why.get(t, "") for t in df.index]
-    df["top12_overlap_pct"] = [
-        100 * _jaccard(r["top_corridors"], base["top_corridors"])
-        if base is not None else 100.0 for _, r in df.iterrows()]
+    base_mat = _corridor_material("baseline") if base is not None else None
+    base_lead = _lead_streets(base["top_corridors"]) if base is not None else set()
+    df["edge_overlap_pct"] = [_edge_overlap(_corridor_material(t), base_mat)
+                              for t in df.index]
+    df["lead_streets_shared"] = [len(_lead_streets(r["top_corridors"]) & base_lead)
+                                 for _, r in df.iterrows()]
+    df["lead_streets_new"] = ["; ".join(sorted(_lead_streets(r["top_corridors"]) - base_lead))
+                              for _, r in df.iterrows()]
     df["top_corridor"] = [r["top_corridors"][0] if r["top_corridors"] else ""
                           for _, r in df.iterrows()]
     flat = df.drop(columns=["top_corridors", "params"], errors="ignore")
@@ -246,13 +290,21 @@ def _write(df: pd.DataFrame) -> None:
     L += ["", "Published: Filbert 31.5%, Jones 29%, 22nd 31.5%, Bradford 41%.", ""]
 
     L += ["## Corridors, passes and the Wiggle", "",
-          "| Configuration | Corridors found | Top-12 overlap with baseline | "
-          "Top corridor | Top pass | Wiggle excess climb (flat / shortest) |",
-          "|---|---|---|---|---|---|"]
+          "Corridor overlap is measured on the street itself: the "
+          "length-weighted share of corridor-material edges the run has in "
+          "common with the baseline. Comparing corridor names would be "
+          "misleading, since a merge boundary moving by one block renames a "
+          "corridor without changing where it runs.", "",
+          "| Configuration | Corridors found | Corridor edges shared with "
+          "baseline | Lead streets of the top 12 kept | Streets that enter the "
+          "top 12 | Top corridor | Top pass | Wiggle excess climb (flat / shortest) |",
+          "|---|---|---|---|---|---|---|---|"]
     for tag, r in df.iterrows():
         top = r["top_corridor"].split(" - ")[0]
         L.append(f"| {tag} | {int(r['corridor_count'])} | "
-                 f"{r['top12_overlap_pct']:.0f}% | "
+                 f"{r['edge_overlap_pct']:.0f}% | "
+                 f"{int(r['lead_streets_shared'])}/12 | "
+                 f"{r['lead_streets_new'] or '&mdash;'} | "
                  f"{top} ({r['top_corridor_km']:.1f} km) | "
                  f"{r.get('top_pass_nbhd','')} {r.get('top_pass_ft', float('nan')):.0f} ft, "
                  f"{int(r.get('top_pass_pairs', 0))} pairs | "
@@ -261,6 +313,7 @@ def _write(df: pd.DataFrame) -> None:
 
     if base is not None and len(df) > 1:
         others = df.drop(index="baseline")
+        have_overlap = others["edge_overlap_pct"].notna().any()
         L += ["", "## Reading it", "",
               f"- The headline trade (extra distance for climbing avoided on the "
               f"flattest route) ranges from "
@@ -269,11 +322,22 @@ def _write(df: pd.DataFrame) -> None:
               f"{others['min_climb_detour_pct'].max():+.0f}% / "
               f"{others['min_climb_gain_saved_pct'].max():.0f}% across every "
               f"perturbation, against {base['min_climb_detour_pct']:+.0f}% / "
-              f"{base['min_climb_gain_saved_pct']:.0f}% at baseline.",
-              f"- The top-12 corridor set keeps at least "
-              f"{100*min(_jaccard(r['top_corridors'], base['top_corridors']) for _, r in others.iterrows()):.0f}% "
-              f"overlap with the baseline under every perturbation.",
-              f"- The dominant pass is in {base.get('top_pass_nbhd','')} in "
+              f"{base['min_climb_gain_saved_pct']:.0f}% at baseline."]
+        if have_overlap:
+            L += [f"- The corridor material stays "
+              f"{others['edge_overlap_pct'].min():.0f}-"
+              f"{others['edge_overlap_pct'].max():.0f}% the same street, by "
+              f"length, under every perturbation, and "
+              f"{int(others['lead_streets_shared'].min())}-"
+              f"{int(others['lead_streets_shared'].max())} of the baseline's "
+              f"12 lead streets keep their place. What moves is the exact "
+              f"extent and composite name of each corridor, most under the "
+              f"profile smoothing window "
+              f"(**{others['edge_overlap_pct'].idxmin()}**, "
+              f"{others['edge_overlap_pct'].min():.0f}%), and a few "
+              f"borderline streets drift in and out at the margin: "
+              f"{', '.join(sorted({s for v in others['lead_streets_new'] for s in v.split('; ') if s}))}."]
+        L += [f"- The dominant pass is in {base.get('top_pass_nbhd','')} in "
               f"{int((df['top_pass_nbhd'] == base.get('top_pass_nbhd')).sum())} of "
               f"{len(df)} configurations.",
               f"- The Wiggle is discovered as a corridor in "

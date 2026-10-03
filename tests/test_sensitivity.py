@@ -98,6 +98,7 @@ def test_writer_produces_csv_and_markdown(tmp_path, monkeypatch):
     from sf_flat_routes import sensitivity as S
     monkeypatch.setattr(S, "SENS_CSV", tmp_path / "s.csv")
     monkeypatch.setattr(S, "SENS_MD", tmp_path / "s.md")
+    monkeypatch.setattr(S, "RUNS_DIR", tmp_path / "no-runs")   # no run dirs
     df = pd.DataFrame([
         _fake_row("baseline"),
         _fake_row("spacing_10m", min_climb_gain_saved_pct=36.0,
@@ -107,10 +108,13 @@ def test_writer_produces_csv_and_markdown(tmp_path, monkeypatch):
     md = (tmp_path / "s.md").read_text()
     assert "| baseline |" in md and "| spacing_10m |" in md
     assert "coarser DEM sampling" in md          # the reason column
-    assert "50%" in md                           # Jaccard 2/4 for the perturbed row
+    assert "| 2/12 |" in md                      # two lead streets kept
+    assert "Other" in md                         # the street that entered
     csv = pd.read_csv(tmp_path / "s.csv", index_col="tag")
     assert "top_corridors" not in csv.columns    # list column dropped from CSV
     assert csv.loc["spacing_10m", "min_climb_gain_saved_pct"] == 36.0
+    assert csv.loc["spacing_10m", "lead_streets_shared"] == 2
+    assert pd.isna(csv.loc["spacing_10m", "edge_overlap_pct"])  # no run dirs
 
 
 def test_jaccard():
@@ -118,6 +122,20 @@ def test_jaccard():
     assert _jaccard(["a", "b"], ["a", "b"]) == 1.0
     assert _jaccard(["a", "b"], ["b", "c"]) == pytest.approx(1 / 3)
     assert _jaccard([], []) == 1.0
+
+
+def test_edge_overlap_is_length_weighted():
+    from sf_flat_routes.sensitivity import _edge_overlap, _lead_streets
+    a = {1: 100.0, 2: 300.0}
+    b = {2: 300.0, 3: 100.0}
+    # shared 300 of a 500 m union
+    assert _edge_overlap(a, b) == pytest.approx(60.0)
+    assert _edge_overlap(a, a) == 100.0
+    assert _edge_overlap({}, {}) == 100.0
+    import math
+    assert math.isnan(_edge_overlap(None, b))
+    assert _lead_streets(["Valencia Street - 16th Street", "Mission Street", ""]) == {
+        "Valencia Street", "Mission Street"}
 
 
 def test_grid_is_one_at_a_time_around_the_baseline():

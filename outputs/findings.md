@@ -219,6 +219,25 @@ The two networks are modelled separately, and they are not interchangeable. San 
 
 The result is that the flattest bicycle route averages 4.62 mi and 281 ft of climbing against 4.56 mi and 281 ft on foot. The difference is modest in aggregate but decisive in specific places: any route whose flat pedestrian option runs up a stairway has no bicycle equivalent at all, which is why the Presidio has no bicycle-legal connection from some of its paths.
 
+## How much of this depends on the modelling choices?
+
+Every figure above was recomputed with the whole pipeline rebuilt under 10 one-at-a-time changes to the elevation parameters and the choice of access intersection (`outputs/sensitivity.md` has the full tables).
+
+| Finding | Baseline | Range across all perturbations |
+|---|---|---|
+| Flattest route: extra distance | +14% | +14% to +15% |
+| Flattest route: climbing avoided | 39% | 39% to 40% |
+| Grade-averse: mean steepest pitch | 10.8% | 10.0% to 11.3% |
+| Corridor material shared with baseline (by length) | 100% | 71% to 99% |
+| Lead streets of the top 12 corridors kept | 12 of 12 | 8 to 12 of 12 |
+| Dominant pass | Golden Gate Park, 255 ft | same location in 11 of 11 runs; 255-255 ft |
+| Wiggle: excess climb, flat vs shortest | 5.9 vs 19.2 m | flat 5.1-6.0 m, shortest 18.3-19.5 m |
+| Filbert Street gradient (published 31.5%) | 32.9% | 31.7% to 33.3% |
+
+The headline barely moves: the perturbation that shifts it most is **point_rank_2** (third-nearest access intersection), at 40% climbing avoided against 39% at baseline. The dominant pass and the Wiggle result hold in every run.
+
+The corridors are where the model is least rigid, and it is worth being precise about how. The *street* that qualifies as corridor material is 71-99% the same by length, and the top corridor is Valencia Street in every run; what changes is where each corridor is cut and therefore what it is called, most under the profile smoothing window (**window_50m**, 71%). A handful of borderline streets drift in and out of the top twelve (23rd Street, 24th Street, Alabama Street, California Street, Divisadero Street, Geary Boulevard, Greenwich Street, Hyde Street, Market Street, Oak Street Cyclepath, Oakdale Avenue, Onondaga Avenue, Steiner Street): these are real corridors whose rank depends on tenths of a percent of gradient, not artefacts, and they should be read as a tier rather than a ranking.
+
 ## What this analysis does not tell you
 
 - **Elevation is the ground, not the street surface.** The 1 m lidar DEM is bare-earth, so bridges and tunnels are corrected by interpolating across the structure, and a handful of piers over water had to be solved from their neighbours.
