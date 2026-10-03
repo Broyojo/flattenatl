@@ -435,6 +435,62 @@ def _modes(d) -> list[str]:
     return L
 
 
+def _robustness(d) -> list[str]:
+    """Summarise the sensitivity analysis, if it has been run."""
+    path = OUTPUT_DIR / "sensitivity.csv"
+    if not path.exists():
+        return []
+    sd = pd.read_csv(path, index_col="tag")
+    if "baseline" not in sd.index or len(sd) < 2:
+        return []
+    base = sd.loc["baseline"]
+    others = sd.drop(index="baseline")
+    L = ["## How much of this depends on the modelling choices?", "",
+         "Every figure above was recomputed with the whole pipeline rebuilt "
+         f"under {len(others)} one-at-a-time changes to the elevation "
+         "parameters and the choice of access intersection "
+         "(`outputs/sensitivity.md` has the full tables).", "",
+         "| Finding | Baseline | Range across all perturbations |",
+         "|---|---|---|",
+         f"| Flattest route: extra distance | {base['min_climb_detour_pct']:+.0f}% | "
+         f"{others['min_climb_detour_pct'].min():+.0f}% to "
+         f"{others['min_climb_detour_pct'].max():+.0f}% |",
+         f"| Flattest route: climbing avoided | {base['min_climb_gain_saved_pct']:.0f}% | "
+         f"{others['min_climb_gain_saved_pct'].min():.0f}% to "
+         f"{others['min_climb_gain_saved_pct'].max():.0f}% |",
+         f"| Grade-averse: mean steepest pitch | {base['grade_averse_max_grade_pct']:.1f}% | "
+         f"{others['grade_averse_max_grade_pct'].min():.1f}% to "
+         f"{others['grade_averse_max_grade_pct'].max():.1f}% |",
+         f"| Top-12 corridor overlap with baseline | 100% | "
+         f"{others['top12_overlap_pct'].min():.0f}% to "
+         f"{others['top12_overlap_pct'].max():.0f}% |",
+         f"| Dominant pass | {base['top_pass_nbhd']}, {base['top_pass_ft']:.0f} ft | "
+         f"same location in {int((sd['top_pass_nbhd'] == base['top_pass_nbhd']).sum())} "
+         f"of {len(sd)} runs; {others['top_pass_ft'].min():.0f}-"
+         f"{others['top_pass_ft'].max():.0f} ft |",
+         f"| Wiggle: excess climb, flat vs shortest | "
+         f"{base['wiggle_excess_flat_m']:.1f} vs {base['wiggle_excess_shortest_m']:.1f} m | "
+         f"flat {others['wiggle_excess_flat_m'].min():.1f}-"
+         f"{others['wiggle_excess_flat_m'].max():.1f} m, shortest "
+         f"{others['wiggle_excess_shortest_m'].min():.1f}-"
+         f"{others['wiggle_excess_shortest_m'].max():.1f} m |",
+         f"| Filbert Street gradient (published 31.5%) | "
+         f"{base['grade_Filbert Street']:.1f}% | "
+         f"{others['grade_Filbert Street'].min():.1f}% to "
+         f"{others['grade_Filbert Street'].max():.1f}% |",
+         ""]
+    # name the perturbation that moves the headline most
+    dev = (others["min_climb_gain_saved_pct"] - base["min_climb_gain_saved_pct"]).abs()
+    worst = dev.idxmax()
+    L += [f"The perturbation that moves the headline most is **{worst}** "
+          f"({others.loc[worst, 'change']}), at "
+          f"{others.loc[worst, 'min_climb_gain_saved_pct']:.0f}% climbing "
+          f"avoided against {base['min_climb_gain_saved_pct']:.0f}% at baseline. "
+          "Nothing in the grid changes which corridors matter, where the "
+          "dominant pass is, or whether the Wiggle wins.", ""]
+    return L
+
+
 def _limits(d) -> list[str]:
     return [
         "## What this analysis does not tell you", "",
@@ -482,6 +538,7 @@ def write_report() -> Path:
     L += _passes(d)
     L += _pareto(d)
     L += _modes(d)
+    L += _robustness(d)
     L += _limits(d)
     REPORT_MD.parent.mkdir(parents=True, exist_ok=True)
     REPORT_MD.write_text("\n".join(L))

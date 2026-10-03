@@ -202,6 +202,13 @@ def _jaccard(a: list, b: list) -> float:
 def _write(df: pd.DataFrame) -> None:
     why = {tag: w for tag, _o, w in GRID}
     base = df.loc["baseline"] if "baseline" in df.index else None
+    df = df.copy()
+    df["change"] = [why.get(t, "") for t in df.index]
+    df["top12_overlap_pct"] = [
+        100 * _jaccard(r["top_corridors"], base["top_corridors"])
+        if base is not None else 100.0 for _, r in df.iterrows()]
+    df["top_corridor"] = [r["top_corridors"][0] if r["top_corridors"] else ""
+                          for _, r in df.iterrows()]
     flat = df.drop(columns=["top_corridors", "params"], errors="ignore")
     flat.to_csv(SENS_CSV)
 
@@ -243,9 +250,9 @@ def _write(df: pd.DataFrame) -> None:
           "Top corridor | Top pass | Wiggle excess climb (flat / shortest) |",
           "|---|---|---|---|---|---|"]
     for tag, r in df.iterrows():
-        jac = _jaccard(r["top_corridors"], base["top_corridors"]) if base is not None else 1.0
-        top = (r["top_corridors"][0].split(" - ")[0] if r["top_corridors"] else "")
-        L.append(f"| {tag} | {int(r['corridor_count'])} | {100*jac:.0f}% | "
+        top = r["top_corridor"].split(" - ")[0]
+        L.append(f"| {tag} | {int(r['corridor_count'])} | "
+                 f"{r['top12_overlap_pct']:.0f}% | "
                  f"{top} ({r['top_corridor_km']:.1f} km) | "
                  f"{r.get('top_pass_nbhd','')} {r.get('top_pass_ft', float('nan')):.0f} ft, "
                  f"{int(r.get('top_pass_pairs', 0))} pairs | "
