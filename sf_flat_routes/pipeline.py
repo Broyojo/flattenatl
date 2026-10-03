@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .config import FEATURED_PAIRS
 from .utils import configure_gdal_for_proxy, get_logger, step
 
 log = get_logger("sf_flat_routes.pipeline")
@@ -59,7 +58,11 @@ def run_analysis(ctx: Context, force: bool = False):
     with step("neighborhood-pair routing", log):
         pairs, arc_store = run_pair_analysis(ctx.graphs, ctx.points, force=force)
     with step("Pareto frontier analysis", log):
-        pareto = run_pareto(ctx.graphs, ctx.points, FEATURED_PAIRS, force=force)
+        # every ordered pair: one Dijkstra per (weight, origin) serves all
+        # destinations, so the full matrix costs no more than the sample did
+        names = list(ctx.points["walk"]["neighborhood"])
+        all_pairs = [(o, d) for o in names for d in names if o != d]
+        pareto = run_pareto(ctx.graphs, ctx.points, all_pairs, force=force)
     with step("corridor detection", log):
         corridors, scores = run_corridor_analysis(
             ctx.graphs, arc_store, pairs, ctx.edges, ctx.neighborhoods,

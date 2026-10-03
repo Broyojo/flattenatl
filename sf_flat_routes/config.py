@@ -15,8 +15,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(os.environ.get("SFFR_ROOT", Path(__file__).resolve().parent.parent))
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
-PROCESSED_DIR = DATA_DIR / "processed"
-OUTPUT_DIR = PROJECT_ROOT / "outputs"
+#: ``SFFR_RUN_DIR`` redirects every processed and output path under one
+#: directory, so an experiment (see ``sensitivity.py``) can rebuild the whole
+#: pipeline with different parameters without touching the main results.
+_RUN_DIR = os.environ.get("SFFR_RUN_DIR")
+PROCESSED_DIR = Path(_RUN_DIR) / "processed" if _RUN_DIR else DATA_DIR / "processed"
+OUTPUT_DIR = Path(_RUN_DIR) / "outputs" if _RUN_DIR else PROJECT_ROOT / "outputs"
 
 for _d in (RAW_DIR, PROCESSED_DIR, OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -81,9 +85,38 @@ class ElevationConfig:
     #: the endpoints instead of from the DEM (the DEM samples the ground or
     #: water surface beneath the structure).
     interpolate_structures: bool = True
+    #: Standard deviation (m) of the Gaussian applied to the DEM before any
+    #: sampling. 3 m is far narrower than a street and far narrower than the
+    #: block scale on which real gradient varies; 0 disables it.
+    dem_sigma_m: float = 3.0
 
 
-ELEVATION = ElevationConfig()
+def _overrides() -> dict:
+    """Parameter overrides from ``SFFR_OVERRIDES`` (a JSON object).
+
+    Used by the sensitivity harness to rebuild the pipeline under different
+    settings. Keys are ``ElevationConfig`` or ``AnalysisConfig`` field names.
+    """
+    raw = os.environ.get("SFFR_OVERRIDES")
+    if not raw:
+        return {}
+    import json
+    try:
+        return dict(json.loads(raw))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"SFFR_OVERRIDES is not a JSON object: {raw!r}") from exc
+
+
+_OV = _overrides()
+
+
+def _apply(instance, overrides: dict):
+    names = {f.name for f in instance.__dataclass_fields__.values()}
+    picked = {k: v for k, v in overrides.items() if k in names}
+    return replace(instance, **picked) if picked else instance
+
+
+ELEVATION = _apply(ElevationConfig(), _OV)
 
 # --------------------------------------------------------------------------
 # Grade thresholds
@@ -169,8 +202,14 @@ ROUTING_PROFILES: dict[str, CostWeights] = {
                             extreme_extra=10.0),
 }
 
-#: Weight sweep used to trace the distance/climb Pareto frontier.
-PARETO_ALPHA_SWEEP = (0.0, 2.0, 4.0, 6.0, 9.0, 13.0, 18.0, 25.0, 35.0, 50.0, 80.0, 140.0, 250.0)
+#: Sweep used to trace the distance/climb Pareto frontier. Each value scales
+#: *every* climbing and grade term of the balanced profile together (alpha,
+#: beta and gamma), so 0 is pure distance, 1 is the balanced objective and
+#: large values approach the flattest possible route. Scaling only alpha,
+#: as an earlier version did, left beta and gamma in force at the "shortest"
+#: end and the frontier never reached the true shortest path.
+PARETO_LAMBDA_SWEEP = (0.0, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0,
+                       5.0, 8.0, 15.0)
 
 # --------------------------------------------------------------------------
 # Travel modes
@@ -278,9 +317,13 @@ class AnalysisConfig:
     pass_cluster_radius_m: float = 400.0
     #: Number of Pareto sample pairs reported in detail.
     pareto_detail_pairs: int = 14
+    #: Which qualifying intersection to use as a neighborhood's access point:
+    #: 0 is the one nearest the street-weighted centre, 1 the next nearest,
+    #: and so on. Non-zero values exist for robustness checks only.
+    point_rank: int = 0
 
 
-ANALYSIS = AnalysisConfig()
+ANALYSIS = _apply(AnalysisConfig(), _OV)
 
 # --------------------------------------------------------------------------
 # Representative neighborhood pairs highlighted in the written analysis
@@ -326,3 +369,15 @@ def profile(name: str) -> CostWeights:
 def with_alpha(weights: CostWeights, alpha: float) -> CostWeights:
     """Return a copy of ``weights`` with a different climbing weight."""
     return replace(weights, alpha=alpha, name=f"{weights.name}_a{alpha:g}")
+
+
+def with_scale(weights: CostWeights, lam: float) -> CostWeights:
+    """Scale every climbing/grade term of ``weights`` by ``lam``.
+
+    ``lam == 0`` is pure distance, with the comfort multipliers switched off
+    so that it coincides exactly with the ``shortest`` objective.
+    """
+    return replace(weights, alpha=weights.alpha * lam, beta=weights.beta * lam,
+                   gamma=weights.gamma * lam,
+                   use_class_multiplier=(lam > 0) and weights.use_class_multiplier,
+                   name=f"{weights.name}_x{lam:g}")

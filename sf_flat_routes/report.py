@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .config import FEATURED_PAIRS, OUTPUT_DIR, PROCESSED_DIR
@@ -352,11 +353,42 @@ def _pareto(d) -> list[str]:
         return []
     pa = d["pareto"]
     pa = pa[(pa["mode"] == "walk") & pa["pareto_optimal"]]
+
+    # citywide: for every pair, how much detour does halving the climb cost?
+    rows = []
+    for (o, dst), g in pa.groupby(["origin", "destination"]):
+        g = g.sort_values("distance_m")
+        s = g.iloc[0]                       # the pure-distance anchor
+        if s["elev_gain_m"] <= 0:
+            continue
+        half = g[g["elev_gain_m"] <= 0.5 * s["elev_gain_m"]]
+        rows.append({
+            "halvable": len(half) > 0,
+            "detour_to_halve": (half["distance_m"].min() / s["distance_m"] - 1)
+            if len(half) else np.nan,
+            "best_saved_pct": 100 * (1 - g["elev_gain_m"].min() / s["elev_gain_m"]),
+            "best_detour": g.loc[g["elev_gain_m"].idxmin(), "distance_m"]
+            / s["distance_m"] - 1,
+        })
+    r = pd.DataFrame(rows)
+
     L = ["## The distance / climbing trade-off", "",
-         "Sweeping the climbing weight from zero to 250 traces the frontier "
-         "between distance, cumulative climbing and peak gradient. The point "
-         "of the frontier is to find the knee: the route that removes most of "
-         "the climbing before the detour becomes silly.", ""]
+         "For every one of the 1,260 ordered pairs, a single weight is swept "
+         "from zero (pure distance) up to the minimum-climbing objective, "
+         "tracing the frontier between distance, cumulative climbing and "
+         "peak gradient. The useful question is where the knee is: how much "
+         "detour buys how much of the climbing.", ""]
+    if len(r):
+        L += [f"- **{100*r['halvable'].mean():.0f}% of pairs can halve their "
+              f"climbing** by some route, and the median detour that costs is "
+              f"**{100*r['detour_to_halve'].median():.0f}%**. "
+              f"{100*(r['detour_to_halve'] <= 0.10).mean():.0f}% of all pairs "
+              f"can halve it within a 10% detour, "
+              f"{100*(r['detour_to_halve'] <= 0.20).mean():.0f}% within 20%.",
+              f"- Taken to the flattest possible route, the median pair "
+              f"sheds **{r['best_saved_pct'].median():.0f}%** of its climbing "
+              f"for a median **{100*r['best_detour'].median():.0f}%** more "
+              f"distance.", ""]
     for o, dst in FEATURED_PAIRS[:4]:
         g = pa[(pa["origin"] == o) & (pa["destination"] == dst)]
         if g.empty:
@@ -364,10 +396,10 @@ def _pareto(d) -> list[str]:
         g = g.sort_values("distance_m")
         L += [f"**{o} to {dst}**", "",
               "| Distance | Climb | Steepest grade |", "|---|---|---|"]
-        for _, r in g.iterrows():
-            L.append(f"| {_mi(r['distance_m']):.2f} mi | "
-                     f"{_ft(r['elev_gain_m']):.0f} ft | "
-                     f"{r['max_grade']:.0%} |")
+        for _, row in g.iterrows():
+            L.append(f"| {_mi(row['distance_m']):.2f} mi | "
+                     f"{_ft(row['elev_gain_m']):.0f} ft | "
+                     f"{row['max_grade']:.0%} |")
         L.append("")
     L += ["The frontiers are strongly concave: the first fraction of extra "
           "distance removes most of the climbing, and everything after that "

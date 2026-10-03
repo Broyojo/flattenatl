@@ -53,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
         sp = sub.add_parser(name, help=helptext)
         _add_common(sp)
 
+    sp = sub.add_parser("sensitivity",
+                        help="rebuild the pipeline under perturbed parameters")
+    _add_common(sp)
+    sp.add_argument("--only", nargs="*", help="run only these configuration tags")
+
+    sm = sub.add_parser("summarize", help=argparse.SUPPRESS)
+    _add_common(sm)
+    sm.add_argument("--tag", required=True)
+
     rp = sub.add_parser("route", help="route between two neighborhoods")
     _add_common(rp)
     rp.add_argument("--from", dest="origin", required=True)
@@ -172,6 +181,19 @@ def cmd_route(args) -> int:
     return 0
 
 
+def cmd_sensitivity(args) -> int:
+    from .sensitivity import SENS_MD, run_sensitivity
+    run_sensitivity(force=args.force, only=args.only)
+    print(SENS_MD.read_text())
+    return 0
+
+
+def cmd_summarize(args) -> int:
+    from .sensitivity import summarize_current_run
+    summarize_current_run(args.tag)
+    return 0
+
+
 def cmd_all(args) -> int:
     for fn in (cmd_download, cmd_build_network, cmd_analyze, cmd_validate,
                cmd_map, cmd_report):
@@ -186,6 +208,7 @@ _DISPATCH = {
     "build-network": cmd_build_network, "analyze": cmd_analyze,
     "validate": cmd_validate, "map": cmd_map, "report": cmd_report,
     "route": cmd_route, "all": cmd_all,
+    "sensitivity": cmd_sensitivity, "summarize": cmd_summarize,
 }
 
 

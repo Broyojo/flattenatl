@@ -210,3 +210,29 @@ def test_empty_route_summary_is_all_zero():
     g = build_route_graph(_diamond(), "walk")
     s = summarise_route(g, [])
     assert s["distance_m"] == 0.0 and s["elev_gain_m"] == 0.0
+
+
+def test_with_scale_zero_is_pure_distance():
+    from sf_flat_routes.config import with_scale
+    w = with_scale(profile("balanced"), 0.0)
+    assert w.alpha == 0 and w.beta == 0 and w.gamma == 0
+    assert w.use_class_multiplier is False
+    d = make_directed([{"length_m": 250.0, "cls": "steps", "cum_gain": 40.0,
+                        "d_above_8": 120.0}])
+    assert edge_costs(d, w, "walk")[0] == pytest.approx(250.0)
+    # ... and therefore coincides with the shortest objective exactly
+    assert edge_costs(d, w, "walk")[0] == edge_costs(d, profile("shortest"), "walk")[0]
+
+
+def test_with_scale_one_is_the_profile_itself():
+    from sf_flat_routes.config import with_scale
+    base = profile("balanced")
+    w = with_scale(base, 1.0)
+    assert (w.alpha, w.beta, w.gamma) == (base.alpha, base.beta, base.gamma)
+    assert w.use_class_multiplier == base.use_class_multiplier
+
+
+def test_pareto_sweep_starts_at_zero_and_is_increasing():
+    from sf_flat_routes.config import PARETO_LAMBDA_SWEEP
+    assert PARETO_LAMBDA_SWEEP[0] == 0.0
+    assert list(PARETO_LAMBDA_SWEEP) == sorted(PARETO_LAMBDA_SWEEP)

@@ -29,7 +29,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import (CRS_PROJECTED, EXCLUDED_NEIGHBORHOODS, PROCESSED_DIR)
+from .config import (ANALYSIS, CRS_PROJECTED, EXCLUDED_NEIGHBORHOODS,
+                     PROCESSED_DIR)
 from .download import NEIGHBORHOODS_GEOJSON
 from .utils import get_logger, step
 
@@ -170,7 +171,8 @@ def choose_representative_points(edges, neighborhoods=None, mode: str = "walk",
                 pool = sub[crit.to_numpy()] if hasattr(crit, "to_numpy") else sub[crit]
                 if len(pool):
                     d2 = ((pool["x"] - cx) ** 2 + (pool["y"] - cy) ** 2).to_numpy()
-                    best = pool.iloc[int(np.argmin(d2))]
+                    order = np.argsort(d2, kind="stable")
+                    best = pool.iloc[int(order[min(ANALYSIS.point_rank, len(order) - 1)])]
                     centroid = poly.centroid
                     pt = Point(best["x"], best["y"])
                     records.append({

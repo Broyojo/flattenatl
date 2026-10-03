@@ -15,8 +15,8 @@ import pickle
 import numpy as np
 import pandas as pd
 
-from .config import (GRADE_THRESHOLDS, OUTPUT_DIR, PARETO_ALPHA_SWEEP,
-                     PROCESSED_DIR, ROUTING_PROFILES, with_alpha)
+from .config import (GRADE_THRESHOLDS, OUTPUT_DIR, PARETO_LAMBDA_SWEEP,
+                     PROCESSED_DIR, ROUTING_PROFILES, with_scale)
 from .routing import (RouteGraph, arcs_from_predecessors, shortest_paths,
                       summarise_route)
 from .utils import get_logger, progress, step
@@ -157,13 +157,14 @@ def _non_dominated(points: np.ndarray) -> np.ndarray:
 
 
 def pareto_for_pairs(graph: RouteGraph, points: pd.DataFrame, pairs,
-                     alphas=PARETO_ALPHA_SWEEP, base_profile: str = "balanced"):
+                     lambdas=PARETO_LAMBDA_SWEEP, base_profile: str = "balanced"):
     """Trace the distance / climbing / max-grade frontier for given pairs.
 
-    The climbing weight ``alpha`` is swept while the grade-penalty shape is
-    held fixed.  Each weight yields one optimal route; duplicates are merged
-    and the non-dominated subset over (distance, gain, max grade) is the
-    frontier.
+    A single scalar scales all of the balanced profile's climbing and grade
+    terms from zero (pure distance) upwards, and the pure minimum-climbing
+    objective is added as the far anchor.  Each weighting yields one optimal
+    route; duplicates are merged and the non-dominated subset over
+    (distance, gain, max grade) is the frontier.
     """
     node_idx, names = _origin_targets(graph, points)
     name_to_idx = dict(zip(names, node_idx))
@@ -176,11 +177,12 @@ def pareto_for_pairs(graph: RouteGraph, points: pd.DataFrame, pairs,
     origins = sorted({o for o, _ in wanted})
     src = np.asarray([name_to_idx[o] for o in origins], dtype=np.int64)
 
+    sweep = [(lam, with_scale(base, lam)) for lam in lambdas]
+    sweep.append((float("inf"), ROUTING_PROFILES["min_climb"]))
     records: list[dict] = []
-    with step(f"Pareto sweep: {len(alphas)} weights x {len(wanted)} pairs "
+    with step(f"Pareto sweep: {len(sweep)} weights x {len(wanted)} pairs "
               f"[{graph.mode}]", log):
-        for alpha in progress(alphas, desc="  alpha sweep", unit="weight"):
-            w = with_alpha(base, alpha)
+        for alpha, w in progress(sweep, desc="  weight sweep", unit="weight"):
             arc_cost = graph.build_costs(w)
             dist, pred, winner = shortest_paths(graph, arc_cost, src)
             for si, oname in enumerate(origins):

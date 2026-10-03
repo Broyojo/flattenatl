@@ -145,59 +145,71 @@ A steep street that carries heavy shortest-path traffic but almost none once cli
 
 ## The distance / climbing trade-off
 
-Sweeping the climbing weight from zero to 250 traces the frontier between distance, cumulative climbing and peak gradient. The point of the frontier is to find the knee: the route that removes most of the climbing before the detour becomes silly.
+For every one of the 1,260 ordered pairs, a single weight is swept from zero (pure distance) up to the minimum-climbing objective, tracing the frontier between distance, cumulative climbing and peak gradient. The useful question is where the knee is: how much detour buys how much of the climbing.
+
+- **35% of pairs can halve their climbing** by some route, and the median detour that costs is **12%**. 16% of all pairs can halve it within a 10% detour, 24% within 20%.
+- Taken to the flattest possible route, the median pair sheds **41%** of its climbing for a median **16%** more distance.
 
 **Mission to Outer Sunset**
 
 | Distance | Climb | Steepest grade |
 |---|---|---|
-| 6.19 mi | 366 ft | 7% |
-| 6.20 mi | 346 ft | 7% |
+| 5.10 mi | 1130 ft | 60% |
+| 5.50 mi | 640 ft | 12% |
+| 6.13 mi | 355 ft | 9% |
+| 6.14 mi | 355 ft | 7% |
+| 6.19 mi | 352 ft | 7% |
 | 6.20 mi | 345 ft | 7% |
 | 6.20 mi | 345 ft | 7% |
 | 6.21 mi | 341 ft | 7% |
 | 6.21 mi | 340 ft | 7% |
-| 6.21 mi | 335 ft | 7% |
-| 6.28 mi | 331 ft | 7% |
+| 6.22 mi | 333 ft | 9% |
+| 6.31 mi | 338 ft | 7% |
 
 **Inner Richmond to Downtown/Civic Center**
 
 | Distance | Climb | Steepest grade |
 |---|---|---|
+| 2.81 mi | 224 ft | 10% |
+| 2.86 mi | 145 ft | 7% |
 | 2.89 mi | 123 ft | 7% |
 | 2.90 mi | 117 ft | 7% |
 | 2.90 mi | 117 ft | 7% |
 | 2.91 mi | 116 ft | 7% |
-| 3.08 mi | 107 ft | 7% |
-| 3.18 mi | 104 ft | 7% |
+| 3.02 mi | 110 ft | 7% |
+| 3.21 mi | 115 ft | 5% |
+| 3.34 mi | 109 ft | 5% |
+| 3.54 mi | 108 ft | 5% |
 
 **Mission to Marina**
 
 | Distance | Climb | Steepest grade |
 |---|---|---|
-| 4.07 mi | 191 ft | 8% |
-| 4.07 mi | 183 ft | 8% |
+| 3.78 mi | 341 ft | 15% |
+| 3.79 mi | 248 ft | 9% |
 | 4.10 mi | 178 ft | 8% |
 | 4.10 mi | 178 ft | 8% |
-| 4.10 mi | 178 ft | 8% |
-| 6.48 mi | 121 ft | 8% |
+| 4.37 mi | 184 ft | 6% |
+| 4.37 mi | 184 ft | 6% |
+| 4.37 mi | 184 ft | 6% |
 
 **Bayview to Golden Gate Park**
 
 | Distance | Climb | Steepest grade |
 |---|---|---|
-| 7.64 mi | 366 ft | 10% |
-| 7.64 mi | 364 ft | 10% |
-| 7.64 mi | 362 ft | 10% |
+| 7.00 mi | 1076 ft | 60% |
+| 7.57 mi | 371 ft | 10% |
+| 7.57 mi | 368 ft | 10% |
+| 7.58 mi | 364 ft | 10% |
+| 7.62 mi | 363 ft | 10% |
 | 7.64 mi | 362 ft | 10% |
 | 7.64 mi | 360 ft | 10% |
-| 7.65 mi | 358 ft | 10% |
 | 7.66 mi | 356 ft | 10% |
-| 7.66 mi | 356 ft | 10% |
+| 7.67 mi | 353 ft | 10% |
 | 7.70 mi | 353 ft | 10% |
-| 7.71 mi | 352 ft | 10% |
-| 7.72 mi | 352 ft | 10% |
-| 7.81 mi | 349 ft | 10% |
+| 8.48 mi | 368 ft | 7% |
+| 8.50 mi | 367 ft | 7% |
+| 8.54 mi | 366 ft | 7% |
 
 The frontiers are strongly concave: the first fraction of extra distance removes most of the climbing, and everything after that buys very little. That is the practical argument for the balanced objective over the purely flattest one.
 

@@ -54,8 +54,9 @@ log = get_logger("sf_flat_routes.elevation")
 DEM_MOSAIC = PROCESSED_DIR / "dem_sf_1m.tif"
 PROFILES_NPZ = PROCESSED_DIR / "edge_profiles.npz"
 
-#: Standard deviation (m) of the Gaussian pre-filter applied to the DEM.
-DEM_SMOOTH_SIGMA_M = 3.0
+#: Standard deviation (m) of the Gaussian pre-filter applied to the DEM
+#: (configured in ``config.ElevationConfig.dem_sigma_m``).
+DEM_SMOOTH_SIGMA_M = ELEVATION.dem_sigma_m
 
 
 # --------------------------------------------------------------------------

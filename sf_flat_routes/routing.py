@@ -19,7 +19,7 @@ penalty on top of the climbing term, while a metre at 4% costs 0.25.
 ``alpha`` is the substitution rate between climbing and distance.  Naismith's
 rule for walking implies roughly 8 m of flat walking per metre climbed; the
 "min_climb" profile pushes it to 120 to express near-lexicographic preference
-for avoiding climbing, and the sweep in ``PARETO_ALPHA_SWEEP`` traces the
+for avoiding climbing, and the sweep in ``PARETO_LAMBDA_SWEEP`` traces the
 whole frontier between the two.
 
 The per-class comfort multipliers (a protected cycleway at 0.85, 19th Avenue
