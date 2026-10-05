@@ -1039,10 +1039,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         map.getContainer().classList.toggle("z-high", z >= 15.5);
       };
       map.on("zoomend", zoomClass); zoomClass();
+      map.on("zoomend", () => { if (this._labelled) this.labelRoute(this._labelled); });
 
       this.familyLayer = L.layerGroup().addTo(map);
       this.routeLayer = L.layerGroup().addTo(map);
       this.markers = L.layerGroup().addTo(map);
+      this.labelLayer = L.layerGroup().addTo(map);
 
       map.on("click", (e) => {
         const which = !this.state.from ? "from" : (!this.state.to ? "to" : this.state.focus);
@@ -1274,7 +1276,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     clearRoute() {
-      this.familyLayer.clearLayers(); this.routeLayer.clearLayers();
+      this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
+      $("turns").hidden = true;
       this.shown = null;
       $("result").hidden = true; $("prof").hidden = true; $("delta").textContent = ""; $("slpos").textContent = "";
       $("share").hidden = true; $("sharebox").hidden = true;
@@ -1332,10 +1335,96 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (prev) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
       this._casing.bringToFront(); this._line.bringToFront();
       $("prof").dataset.colour = colour;
+      this.labelRoute(u);
+    },
+
+    /* The streets a route follows, as runs of consecutive arcs sharing a
+     * name: [{name, arcs, length_m, start (index into latlngs)}]. Unnamed
+     * stubs and runs under minRun metres are dropped from the list. */
+    runs(u, minRun = 40) {
+      const g = this.graph, geom = this.geom, out = [];
+      let cur = null;
+      for (const a of u.arcs) {
+        const n = geom.name[g.arcEdge[a]], name = n ? geom.names[n - 1] : null;
+        const L = g.arcLen[a] / g.DM;
+        if (cur && cur.name === name) { cur.arcs.push(a); cur.length_m += L; }
+        else { cur = { name, arcs: [a], length_m: L }; out.push(cur); }
+      }
+      // drop unnamed stubs and short runs, then re-merge what that joins
+      // up ("18th St, 18th St" either side of a nameless crossing)
+      const kept = out.filter((r) => r.name && r.length_m >= minRun), merged = [];
+      for (const r of kept) {
+        const last = merged[merged.length - 1];
+        if (last && last.name === r.name) { last.arcs = last.arcs.concat(r.arcs); last.length_m += r.length_m; }
+        else merged.push({ name: r.name, arcs: r.arcs.slice(), length_m: r.length_m });
+      }
+      return merged;
+    },
+
+    /* Street names drawn along the highlighted route: one per named run,
+     * rotated to the line's bearing, only where the run is long enough on
+     * screen to carry its text, never overlapping another label. Redrawn
+     * on zoom, since what fits changes. */
+    labelRoute(u) {
+      this.labelLayer.clearLayers();
+      this._labelled = u;
+      if (!u) return;
+      const g = this.graph, geom = this.geom, map = this.map;
+      const runs = this.runs(u, 80).sort((a, b) => b.length_m - a.length_m);
+      const placed = [];
+      for (const r of runs) {
+        if (placed.length >= 10) break;
+        const text = shortStreet(r.name);
+        const pts = [];
+        for (const a of r.arcs) for (const ll of g.geometry([a], geom)) {
+          const last = pts[pts.length - 1];
+          if (!last || last[0] !== ll[0] || last[1] !== ll[1]) pts.push(ll);
+        }
+        if (pts.length < 2) continue;
+        // pixel length along the run at this zoom, and its midpoint
+        const px = pts.map((ll) => map.latLngToContainerPoint(ll));
+        const seg = [];
+        let total = 0;
+        for (let i = 1; i < px.length; i++) { const d = px[i].distanceTo(px[i - 1]); seg.push(d); total += d; }
+        const need = text.length * 6.6 + 28;
+        if (total < need) continue;
+        let acc = 0, i = 1;
+        while (i < pts.length - 1 && acc + seg[i - 1] < total / 2) { acc += seg[i - 1]; i++; }
+        const f = seg[i - 1] ? (total / 2 - acc) / seg[i - 1] : 0;
+        const mid = px[i - 1].add(px[i].subtract(px[i - 1]).multiplyBy(f));
+        if (placed.some((q) => q.distanceTo(mid) < need * 0.6)) continue;
+        let deg = Math.atan2(px[i].y - px[i - 1].y, px[i].x - px[i - 1].x) * 180 / Math.PI;
+        if (deg > 90) deg -= 180; else if (deg < -90) deg += 180;
+        const m = L.marker(map.containerPointToLatLng(mid), { interactive: false, keyboard: false,
+          icon: L.divIcon({ className: "rtlabel", iconSize: null,
+            html: `<span style="--rot:${deg.toFixed(1)}deg"></span>` }) }).addTo(this.labelLayer);
+        m.getElement().firstChild.textContent = text;
+        placed.push(mid);
+      }
     },
 
     drawStats(u, prevU) {
       $("result").hidden = false;
+      const runs = this.runs(u, 60);
+      const box = $("turns");
+      box.innerHTML = "";
+      const render = (all) => {
+        box.innerHTML = "";
+        const show = all || runs.length <= 8 ? runs : runs.slice(0, 7);
+        show.forEach((r, i) => {
+          if (i) { const v = document.createElement("span"); v.className = "via"; v.textContent = "→"; box.appendChild(v); }
+          box.appendChild(document.createTextNode(shortStreet(r.name)));
+        });
+        if (show.length < runs.length) {
+          const more = document.createElement("button");
+          more.type = "button"; more.className = "link more";
+          more.textContent = "+" + (runs.length - show.length) + " more";
+          more.addEventListener("click", () => render(true));
+          box.appendChild(more);
+        }
+      };
+      render(false);
+      box.hidden = runs.length === 0;
       const s = u.stats, p = prevU.stats;
       tween(260, (k) => {
         $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
@@ -1494,6 +1583,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   }
 
   /* ------------------------------------------------------------- helpers */
+  const STREET_SHORT = { Street: "St", Avenue: "Ave", Boulevard: "Blvd", Drive: "Dr", Road: "Rd",
+    Terrace: "Ter", Place: "Pl", Court: "Ct", Lane: "Ln", Highway: "Hwy", Parkway: "Pkwy" };
+  function shortStreet(name) {
+    return String(name).split(" ").map((w) => STREET_SHORT[w] || w).join(" ");
+  }
+
   /* Keep at most k members, spread evenly along the frontier's length in
    * normalised (distance, climbing) space, always keeping both ends. */
   function thinFrontier(members, k) {

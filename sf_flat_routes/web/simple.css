@@ -42,6 +42,12 @@ body{background:var(--paper);color:var(--ink);font:14px/1.45 var(--font);overflo
 .no-shade{background:var(--paper)}
 .pin-icon{width:18px;height:18px;border-radius:50%;background:var(--route);border:3px solid var(--card);box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:grab}
 .pin-icon.to{background:var(--ink)}
+.turns{font-size:12.5px;line-height:1.5;color:var(--ink)}
+.turns .via{color:var(--muted);margin:0 3px}
+.turns .more{margin-left:6px;font-size:12px}
+.rtlabel{font:600 11px var(--font);color:var(--ink);letter-spacing:.01em;white-space:nowrap;pointer-events:none;text-shadow:0 0 2px var(--route-casing),0 0 4px var(--route-casing),0 0 6px var(--route-casing)}
+.rtlabel span{display:inline-block;transform:translate(-50%,-50%) rotate(var(--rot,0deg));transform-origin:center}
+.z-low .rtlabel{display:none}
 .nblabel{font:500 11px var(--font);color:var(--muted);letter-spacing:.02em;white-space:nowrap;transform:translate(-50%,-50%);opacity:.85;text-shadow:0 0 3px var(--paper),0 0 6px var(--paper)}
 
 #card{position:absolute;top:16px;left:16px;width:min(400px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.14);padding-block:14px;padding-inline:16px;z-index:1000;display:flex;flex-direction:column;gap:10px}
