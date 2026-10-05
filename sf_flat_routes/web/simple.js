@@ -6,17 +6,17 @@
  * graph's own street names plus Overture places and addresses packed into
  * the bundle (see sf_flat_routes/places.py).
  *
- * The slider is a family of routes, not one route. Each position minimises
- * length + alpha * climbing for one value of alpha, the metres of walking a
- * metre of climb is worth, from 0 (the shortest path) to effectively
- * infinite (the least climbing possible). A one-parameter trade-off of this
- * form is monotone: as alpha grows the route can only get longer and climb
- * less, never the reverse, so the slider does exactly what its ends say.
- * (An earlier version scaled the analysis's balanced objective, whose
- * steepness penalties and comfort-weighted length broke that guarantee:
- * the flattest route could be shorter than its neighbour.) Routes are
- * solved for every position when the endpoints change, so dragging is
- * instant, and the map crossfades between neighbouring members.
+ * The slider is a family of routes, not one route: the whole frontier of
+ * distance against climbing between the two points, every route that no
+ * other route beats on both counts, sorted from shortest to flattest. A
+ * weighted sum (length + alpha * climbing, swept over alpha) finds only the
+ * frontier's convex hull and jumps straight across its dents, which on
+ * some trips is most of the interesting routes; the frontier is found by a
+ * bi-objective search instead (Graph.pareto in engine.js). Along it,
+ * distance only ever grows and climbing only ever falls, so the slider does
+ * exactly what its ends say. The shortest route appears at once and the
+ * rest fills in over the next second or so; dragging is then instant, and
+ * the map crossfades between neighbouring members.
  */
 "use strict";
 
@@ -27,12 +27,18 @@
 
   /* lambda sweep for the slider; the min-climb objective is appended as
    * the last stop so the right-hand end is literally "fewest feet climbed" */
-  /* alpha sweep, in metres of walking per metre of climb. 14 is the
-   * analysis's balanced weight and 120 its minimum-climb weight. The sweep
-   * stops at 200: past that the router starts walking miles to save a few
-   * feet (7.5 miles instead of 4.6 to save 55 ft, on the default trip),
-   * which nobody would call a route. */
-  const ALPHAS = [0, 2, 4, 6, 8, 10, 12, 14, 17, 20, 24, 28, 33, 40, 48, 56, 66, 78, 90, 105, 120, 140, 165, 200];
+  /* The flat end of the frontier is where a metre of climb is worth
+   * ALPHA_MAX metres of walking (the analysis's minimum-climb weight is
+   * 120). Past about 200 the router starts walking miles to save a few feet
+   * (7.5 miles instead of 4.6 to save 55 ft, on the default trip), which
+   * nobody would call a route, so the frontier is cut there. */
+  const ALPHA_MAX = 200;
+  /* frontier points closer than this in climbing are merged */
+  const EPS_GAIN_CM = 50;
+  /* the same tolerance inside the search, at intermediate nodes */
+  const EPS_NODE_CM = 10;
+  /* at most this many routes on the slider, spread evenly along the frontier */
+  const MAX_ROUTES = 30;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -484,6 +490,7 @@
     recompute(fit) {
       const { from, to, mode } = this.state;
       this.family = null;
+      const gen = ++this._gen;
       if (!from || !to) {
         this.clearRoute();
         $("status").textContent = !from && !to ? "Type two places, or click the map twice."
@@ -491,45 +498,79 @@
         return;
       }
       if (from.node === to.node) { this.clearRoute(); $("status").textContent = "Those are the same corner."; return; }
-      $("status").textContent = "Routing…";
       const g = this.graph;
-      const steps = [];
-      const unique = [];
-      const byKey = new Map();
-      const stops = ALPHAS.map((a) => this.weights(a));
-      for (const w of stops) {
-        const r = g.route(from.node, to.node, mode, w);
-        if (!r) { steps.push(-1); continue; }
-        const key = r.arcs.join(",");
-        let id = byKey.get(key);
-        if (id === undefined) {
-          id = unique.length; byKey.set(key, id);
-          const s = g.summarise(r.arcs);
-          unique.push({ id, arcs: r.arcs, stats: s, latlngs: g.geometry(r.arcs, this.geom),
-            profile: resample(s.profile, 160) });
-        }
-        steps.push(id);
-      }
-      if (!unique.length) {
+      const shortest = g.route(from.node, to.node, mode, this.weights(0));
+      if (!shortest) {
         this.clearRoute();
         $("status").textContent = mode === "bike" ? "No bikeable route between those points."
           : "No route between those points.";
         return;
       }
-      for (let i = 0; i < steps.length; i++) if (steps[i] < 0) steps[i] = i ? steps[i - 1] : steps.find((v) => v >= 0);
-      this.family = { steps, unique, shortest: unique[steps[0]] };
-      // a new family numbers its members from 0 again, so whatever was on
-      // the map belongs to the old trip and must not be mistaken for a
-      // member of this one
+      // the shortest and the flattest routes go up at once, so the map can
+      // be fitted to the whole family; the frontier fills in between them
+      const first = this.member(shortest.arcs);
+      const flat = g.route(from.node, to.node, mode, this.weights(ALPHA_MAX)) || shortest;
+      const fm = this.member(flat.arcs);
+      const flatStats = fm.stats;
+      const sameEnds = fm.arcs.length === first.arcs.length && fm.arcs.every((a, i) => a === first.arcs[i]);
+      this.family = { unique: sameEnds ? [first] : [first, fm], shortest: first, partial: true };
+      this.family.unique.forEach((m, i) => { m.id = i; });
       this.shown = null;
-      $("status").textContent = unique.length === 1
-        ? "One route: the shortest is already the flattest."
-        : unique.length + " distinct routes, from shortest to flattest.";
+      $("status").textContent = "Finding every route between shortest and flattest…";
+      $("sl").disabled = true;
       this.drawFamily();
       this.show(true);
       if (fit === true || (fit === "auto" && !this.inView())) this.fit();
       this.writeHash();
       $("share").hidden = false; $("sharebox").hidden = true;
+
+      const search = g.pareto(from.node, to.node, mode, {
+        eps: EPS_GAIN_CM, epsNode: EPS_NODE_CM,
+        dCap: Math.round(flatStats.distance_m * g.DM) + 1,
+        gCap: Math.round(first.stats.elev_gain_m * g.CM) + 1,
+      });
+      const run = () => {
+        if (gen !== this._gen) return;          // the trip changed underneath us
+        if (!search.step(30)) {
+          $("status").textContent = "Finding every route between shortest and flattest… "
+            + search.solutions.length;
+          setTimeout(run, 0);
+          return;
+        }
+        this.finishFamily(search, first, fm, fit);
+      };
+      setTimeout(run, 0);
+    },
+
+    member(arcs) {
+      const s = this.graph.summarise(arcs);
+      return { arcs, stats: s, latlngs: this.graph.geometry(arcs, this.geom),
+        profile: resample(s.profile, 160) };
+    },
+
+    /* the frontier is in, sorted shortest to flattest: pick the routes the
+     * slider will step through */
+    finishFamily(search, first, fm, fit) {
+      let members = search.solutions.map((r) => this.member(r.arcs));
+      if (!members.length) members = [first];
+      members.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
+      // The weighted flattest route is a frontier point by construction.
+      // The search's tolerances can leave it out by a few feet, and if the
+      // search was cut short it is missing altogether, so it closes the
+      // family whenever it beats what the search found.
+      const last = members[members.length - 1];
+      if (fm.stats.elev_gain_m < last.stats.elev_gain_m - 1e-6) members.push(fm);
+      this._search = search;
+      members = thinFrontier(members, MAX_ROUTES);
+      members.forEach((m, i) => { m.id = i; });
+      this.family = { unique: members, shortest: members[0], partial: false };
+      $("sl").disabled = false;
+      $("status").textContent = members.length === 1
+        ? "One route: the shortest is already the flattest."
+        : members.length + " distinct routes, from shortest to flattest.";
+      this.drawFamily();
+      this.show(false);
+      if (fit && !this.inView()) this.fit();
     },
 
     clearRoute() {
@@ -537,16 +578,13 @@
       this.shown = null;
       $("result").hidden = true; $("prof").hidden = true; $("delta").textContent = ""; $("slpos").textContent = "";
       $("share").hidden = true; $("sharebox").hidden = true;
+      $("sl").disabled = false;
     },
 
-    /* The slider runs evenly over the *distinct* routes rather than over
-     * alpha: most alpha values repeat a neighbour's route, and a thumb that
-     * does nothing for half its travel feels broken. Returns the first step
-     * (lowest alpha) at which the chosen route is optimal. */
+    /* slider position -> index into the family, evenly over its members */
     stepAt(t) {
-      const { steps, unique } = this.family;
-      const k = clamp(Math.round(t * (unique.length - 1)), 0, unique.length - 1);
-      return steps.indexOf(k);
+      const n = this.family.unique.length;
+      return clamp(Math.round(t * (n - 1)), 0, n - 1);
     },
 
     drawFamily() {
@@ -560,11 +598,10 @@
     /* show the family member for the current slider position */
     show(immediate) {
       if (!this.family) return;
-      const t = this.state.t, step = this.stepAt(t);
-      const u = this.family.unique[this.family.steps[step]];
+      const t = this.state.t, step = this.stepAt(t), n = this.family.unique.length;
+      const u = this.family.unique[step];
       const colour = ramp(t);
-      $("slpos").textContent = step === 0 ? "distance only"
-        : "1 ft up = " + ALPHAS[step] + " ft along";
+      $("slpos").textContent = this.family.partial ? "" : (n === 1 ? "" : (step + 1) + " of " + n);
       const prev = this.shown;
       if (prev === u) { this.tintRoute(colour); return; }
       this.shown = u;
@@ -757,6 +794,31 @@
   }
 
   /* ------------------------------------------------------------- helpers */
+  /* Keep at most k members, spread evenly along the frontier's length in
+   * normalised (distance, climbing) space, always keeping both ends. */
+  function thinFrontier(members, k) {
+    const n = members.length;
+    if (n <= k) return members;
+    const d = members.map((m) => m.stats.distance_m), c = members.map((m) => m.stats.elev_gain_m);
+    const dr = Math.max(1e-9, d[n - 1] - d[0]), cr = Math.max(1e-9, c[0] - c[n - 1]);
+    const cum = [0];
+    for (let i = 1; i < n; i++) {
+      cum.push(cum[i - 1] + Math.hypot((d[i] - d[i - 1]) / dr, (c[i] - c[i - 1]) / cr));
+    }
+    const total = cum[n - 1], out = [], used = new Set();
+    for (let j = 0; j < k; j++) {
+      const target = total * j / (k - 1);
+      let best = -1, bestErr = Infinity;
+      for (let i = 0; i < n; i++) {
+        if (used.has(i)) continue;
+        const err = Math.abs(cum[i] - target);
+        if (err < bestErr) { bestErr = err; best = i; }
+      }
+      used.add(best); out.push(members[best]);
+    }
+    return out.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
+  }
+
   function resample(prof, n) {
     const { d, z } = prof;
     const out = new Float64Array(n);
@@ -785,7 +847,7 @@
     tween(ms, (k) => { pairs.forEach(([l, o]) => l.setStyle({ opacity: o * k })); });
   }
 
-  App.alphas = ALPHAS;
+  App.ALPHA_MAX = ALPHA_MAX; App._gen = 0;
   window.App = App;
   App.start().catch((err) => {
     console.error(err);

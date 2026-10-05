@@ -102,6 +102,43 @@ function decodePolylineAt(s, start, end) {
   return out;
 }
 
+/* A binary min-heap of (float key, int value) pairs on typed arrays. */
+class MinHeap {
+  constructor(cap = 1 << 16) { this.k = new Float64Array(cap); this.v = new Int32Array(cap); this.n = 0; }
+  push(key, val) {
+    if (this.n === this.k.length) {
+      const nk = new Float64Array(this.k.length * 2), nv = new Int32Array(this.v.length * 2);
+      nk.set(this.k); nv.set(this.v); this.k = nk; this.v = nv;
+    }
+    const k = this.k, v = this.v;
+    let i = this.n++;
+    k[i] = key; v[i] = val;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (k[p] <= k[i]) break;
+      const tk = k[p], tv = v[p]; k[p] = k[i]; v[p] = v[i]; k[i] = tk; v[i] = tv; i = p;
+    }
+  }
+  /* removes the minimum; its key is left in this.topKey */
+  pop() {
+    const k = this.k, v = this.v;
+    const top = v[0]; this.topKey = k[0];
+    this.n--;
+    if (this.n > 0) {
+      k[0] = k[this.n]; v[0] = v[this.n];
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = l + 1; let m = i;
+        if (l < this.n && k[l] < k[m]) m = l;
+        if (r < this.n && k[r] < k[m]) m = r;
+        if (m === i) break;
+        const tk = k[m], tv = v[m]; k[m] = k[i]; v[m] = v[i]; k[i] = tk; v[i] = tv; i = m;
+      }
+    }
+    return top;
+  }
+}
+
 /* -------------------------------------------------------------- the graph */
 class Graph {
   constructor(bundle, meta) {
@@ -299,6 +336,126 @@ class Graph {
       }
     }
     return targets.map(t => (seen[t] === stamp && done[t]) ? dist[t] : Infinity);
+  }
+
+  /* Reverse adjacency (arcs grouped by head node), built on first use. */
+  reverse() {
+    if (this._rev) return this._rev;
+    const n = this.n, m = this.m;
+    const indptr = new Int32Array(n + 1);
+    for (let a = 0; a < m; a++) indptr[this.head[a] + 1]++;
+    for (let i = 0; i < n; i++) indptr[i + 1] += indptr[i];
+    const arcs = new Int32Array(m), tail = new Int32Array(m), fill = indptr.slice(0, n);
+    for (let u = 0; u < n; u++) {
+      for (let a = this.indptr[u]; a < this.indptr[u + 1]; a++) { tail[a] = u; arcs[fill[this.head[a]]++] = a; }
+    }
+    this._rev = { indptr, arcs, tail };
+    return this._rev;
+  }
+
+  /* Exact lower bound from every node to dst on one per-arc weight (a
+   * reverse Dijkstra), in that weight's own integer units. */
+  boundsTo(dst, mode, weight) {
+    const { indptr, arcs, tail } = this.reverse();
+    const bit = this.modeBit(mode);
+    const dist = new Float64Array(this.n).fill(Infinity);
+    const done = new Uint8Array(this.n);
+    const heap = new MinHeap();
+    dist[dst] = 0; heap.push(0, dst);
+    while (heap.n > 0) {
+      const u = heap.pop(), du = heap.topKey;
+      if (done[u] || du > dist[u]) continue;
+      done[u] = 1;
+      for (let k = indptr[u]; k < indptr[u + 1]; k++) {
+        const a = arcs[k];
+        if ((this.arcFlags[a] & bit) === 0) continue;
+        const v = tail[a], nd = du + weight[a];
+        if (nd < dist[v]) { dist[v] = nd; heap.push(nd, v); }
+      }
+    }
+    return dist;
+  }
+
+  /* The whole distance-versus-climbing frontier between two nodes: every
+   * route that no other route beats on both counts, not only the ones a
+   * weighted sum can reach. This is BOA* (Hernandez et al., bi-objective
+   * A* with lazy dominance checks): labels (node, length, gain) expand in
+   * order of (length + bound, gain + bound), and a label is dropped when it
+   * reaches a node with no less climbing than a label that got there first,
+   * which, because of the expansion order, was also no longer. The check is
+   * one comparison per label, which is what makes the search affordable in
+   * a browser.
+   *
+   * ``eps`` (cm of gain) merges frontier points that differ by less than
+   * that in climbing, which keeps the frontier to a readable size, and
+   * ``epsNode`` applies the same tolerance at intermediate nodes, where it
+   * trades a little exactness (the tolerance can accumulate along a path)
+   * for a much smaller search; ``dCap``
+   * (5 cm units) and ``gCap`` (cm) bound the search to routes no longer
+   * than the flattest route worth showing and no hillier than the shortest.
+   * ``maxLabels`` is a safety valve: the search then stops with the short
+   * end of the frontier, which it finds first.
+   *
+   * Returns a search object; call step(budgetMs) until it reports done, so
+   * the page can keep painting. */
+  pareto(src, dst, mode, { eps = 50, epsNode = eps, dCap = Infinity, gCap = Infinity, maxLabels = 4e6 } = {}) {
+    const g = this;
+    const bit = g.modeBit(mode);
+    const h1 = g.boundsTo(dst, mode, g.arcLen), h2 = g.boundsTo(dst, mode, g.arcGain);
+    const g2min = new Float64Array(g.n).fill(Infinity);
+    let cap = 1 << 16;
+    let lNode = new Int32Array(cap), lG1 = new Int32Array(cap), lG2 = new Int32Array(cap),
+      lParent = new Int32Array(cap), lArc = new Int32Array(cap);
+    let nl = 0;
+    const grow = () => {
+      cap *= 2;
+      const r = (old, T) => { const a = new T(cap); a.set(old); return a; };
+      lNode = r(lNode, Int32Array); lG1 = r(lG1, Int32Array); lG2 = r(lG2, Int32Array);
+      lParent = r(lParent, Int32Array); lArc = r(lArc, Int32Array);
+    };
+    const K = 1 << 20;   // f1 in the high bits, f2 in the low: expansion order (f1, f2)
+    const heap = new MinHeap();
+    const add = (node, g1, g2, parent, arc) => {
+      if (nl === cap) grow();
+      lNode[nl] = node; lG1[nl] = g1; lG2[nl] = g2; lParent[nl] = parent; lArc[nl] = arc;
+      heap.push((g1 + h1[node]) * K + Math.min(g2 + h2[node], K - 1), nl);
+      nl++;
+    };
+    const search = { solutions: [], done: false, expanded: 0, labels: 0, truncated: false };
+    if (src === dst || !Number.isFinite(h1[src])) { search.done = true; return search; }
+    add(src, 0, 0, -1, -1);
+
+    search.step = (budgetMs = 30) => {
+      const t0 = performance.now();
+      let n = 0;
+      while (heap.n > 0) {
+        if ((++n & 1023) === 0 && performance.now() - t0 > budgetMs) return false;
+        const x = heap.pop();
+        const node = lNode[x], g1 = lG1[x], g2 = lG2[x];
+        if (g2 + (node === dst ? eps : epsNode) > g2min[node] || g2 + h2[node] + eps > g2min[dst]) continue;
+        g2min[node] = g2;
+        search.expanded++;
+        if (node === dst) {
+          const arcs = [];
+          for (let y = x; lParent[y] >= 0; y = lParent[y]) arcs.push(lArc[y]);
+          arcs.reverse();
+          search.solutions.push({ arcs, length: g1 / g.DM, gain: g2 / g.CM });
+          continue;
+        }
+        for (let a = g.indptr[node]; a < g.indptr[node + 1]; a++) {
+          if ((g.arcFlags[a] & bit) === 0) continue;
+          const v = g.head[a], n1 = g1 + g.arcLen[a], n2 = g2 + g.arcGain[a];
+          if (n1 + h1[v] > dCap || n2 + h2[v] > gCap) continue;
+          if (n2 + epsNode > g2min[v] || n2 + h2[v] + eps > g2min[dst]) continue;
+          add(v, n1, n2, x, a);
+        }
+        if (nl > maxLabels) { search.truncated = true; break; }
+      }
+      search.labels = nl;
+      search.done = true;
+      return true;
+    };
+    return search;
   }
 
   /* Arc index for an (edge id, reversed) pair. Built on first use; the map
@@ -526,4 +683,4 @@ class Grid {
 
 
 window.Graph = Graph; window.Geometry = Geometry; window.Grid = Grid;
-window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle;
+window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle; window.MinHeap = MinHeap;

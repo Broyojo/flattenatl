@@ -345,28 +345,32 @@ The street network is painted directly onto a canvas from the packed arrays,
 with viewport culling and a zoom-dependent minimum edge length. 88,000
 individual Leaflet polylines would not have been usable; one canvas pass is.
 
-The route finder's slider is a **family of routes**: when the endpoints
-change it solves twenty-four Dijkstras, one per value of α in
-*cost = length + α × climbing*, from α = 0 (the true shortest path) to
-α = 200, on real length with no comfort multipliers. The sweep stops at
-200 because beyond it the router walks miles to save a few feet (on the
-default trip, 7.5 miles instead of 4.6 to save 55 ft), which is the
-degenerate end of the trade-off rather than a route anyone wants; the
-slider then runs evenly over the distinct routes found, since most α
-values repeat a neighbour's. A one-parameter trade-off of that form is monotone:
-if α₂ > α₁ then the α₂ route climbs no more and is no shorter than the α₁
-route (add the two optimality inequalities and the cross terms cancel), so
+The route finder's slider is a **family of routes**: the whole frontier of
+distance against climbing between the two points, every route that no
+other route beats on both counts, sorted from shortest to flattest. The
+first version swept a weighted sum, *length + α × climbing*, over values
+of α. That finds only the frontier's convex hull: a route that is a good
+compromise but sits in a dent of the curve never wins for any α, and on
+some trips the dent holds most of the interesting routes (California &
+Kearny to the Marina jumped straight from the direct route over Russian
+Hill to the Embarcadero loop, with nothing in between). The frontier is
+now found by a bi-objective search, BOA* (bi-objective A* with lazy
+dominance checks, Hernández et al. 2020): labels carry (length, climbing),
+expand in order of bounded length, and a label is dropped on reaching a
+node with no less climbing than a label that got there earlier, which by
+the expansion order was also no longer. The bounds are exact reverse
+Dijkstras on each objective; the search is capped at the length of the
+flattest weighted route (α = 200, beyond which the router walks miles to
+save a few feet) and the climbing of the shortest, and frontier points
+within 0.5 m of climbing are merged. It takes 0.1–0.6 s in the browser for
+trips across the city, during which the shortest route is already shown;
+the slider then runs evenly over up to thirty routes spread along the
+frontier. Along a frontier sorted by distance, climbing can only fall, so
 sliding right never shortens the route and never adds climbing, which is
-what the end labels promise. The first version scaled the balanced
-objective instead, with its steepness penalties and comfort-weighted
-lengths, and that guarantee did not hold: the flattest route could be a
-third of a mile shorter than its neighbour. Identical routes are merged,
-so the slider steps through only the distinct ones, and the map crossfades
-between neighbours while the profile and the numbers tween. That takes
-about 150 ms, after which dragging is free. A genuinely continuous morph
-between two street routes is not meaningful — a path halfway between
-Valencia and Church Street runs through buildings — so the continuity is
-in the cost, not the geometry.
+what the end labels promise. A genuinely continuous morph between two
+street routes is not meaningful — a path halfway between Valencia and
+Church Street runs through buildings — so the continuity is in the
+trade-off, not the geometry.
 
 Place search runs on an index packed into the page: intersections are
 derived in the browser from the graph's own street names; parks, schools,

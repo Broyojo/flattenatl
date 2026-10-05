@@ -46,11 +46,11 @@ _SEARCHES = ["24th & mission", "1234 valencia", "golden gate park", "ferry build
 
 _SCRIPT = """(queries) => {
     const fam = App.family, g = App.graph;
+    const alphas = [0, 14, 120];
     const members = fam.unique.map(u => ({
         id: u.id, distance_m: u.stats.distance_m, gain: u.stats.elev_gain_m,
         arcs: u.arcs.map(a => [g.arcEdge[a], (g.arcFlags[a] & 4) ? 1 : 0]),
-        cost_shortest: g.pathCost(u.arcs, App.state.mode, App.weights(0)),
-        cost_half: g.pathCost(u.arcs, App.state.mode, App.weights(App.alphas[App.stepAt(0.5)])),
+        costs: alphas.map(a => g.pathCost(u.arcs, App.state.mode, App.weights(a))),
     }));
     const search = {};
     for (const q of queries) search[q] = App.index.search(q).map(r => [r.name, r.kind]);
@@ -62,11 +62,12 @@ _SCRIPT = """(queries) => {
     sl.value = 0.5; sl.dispatchEvent(new Event('input'));
     const half = App.shown.id;
     return {
-        from: App.state.from, to: App.state.to, steps: fam.steps, members,
-        alphaHalf: App.alphas[App.stepAt(0.5)],
+        from: App.state.from, to: App.state.to, members, alphas,
         search, atZero, atOne, half, hash: location.hash,
         places: App.index.places.length, intersections: App.index.intersections.length,
         hasAddresses: !!App.index.addr,
+        frontier: { solutions: App._search.solutions.length, labels: App._search.labels,
+                    expanded: App._search.expanded, truncated: App._search.truncated },
     };
 }"""
 
@@ -88,16 +89,21 @@ def page_results():
                 and "ERR_" not in m.text else None)
         page.goto(SIMPLE_HTML.resolve().as_uri(), wait_until="load", timeout=240_000)
         page.wait_for_function(
-            "window.App && App.family && !document.getElementById('result').hidden",
+            "window.App && App.family && !App.family.partial"
+            " && !document.getElementById('result').hidden",
             timeout=240_000)
         out = page.evaluate(_SCRIPT, _SEARCHES)
         # change the destination without touching the slider: the line on
         # the map must be the new trip's, not the old one's
-        out["retarget"] = page.evaluate("""() => {
-            const before = App._line.getLatLngs().length;
+        page.evaluate("""() => {
             const hit = App.index.search('coit tower')[0];
+            window._hit = hit;
             App.setPoint('to', App.pointAt(hit.lon, hit.lat, hit.name), false);
             App.recompute('auto');
+        }""")
+        page.wait_for_function("App.family && !App.family.partial", timeout=120_000)
+        out["retarget"] = page.evaluate("""() => {
+            const hit = window._hit, before = 0;
             const u = App.shown, line = App._line.getLatLngs();
             const end = line[line.length - 1];
             return { before, after: line.length, sameAsShown: line.length === u.latlngs.length,
@@ -113,7 +119,9 @@ def test_the_page_loads_and_routes_its_default_trip(page_results):
     assert not errors, errors[:4]
     assert out["from"] and out["to"]
     assert len(out["members"]) >= 2, "the default trip should offer a real choice"
-    assert len(out["steps"]) == 24          # one per alpha stop
+    f = out["frontier"]
+    assert f["solutions"] >= 2 and not f["truncated"], f
+    assert f["labels"] < 4_000_000, f
 
 
 def test_search_finds_intersections_addresses_and_places(page_results):
@@ -132,27 +140,30 @@ def test_search_finds_intersections_addresses_and_places(page_results):
 
 def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
     out, _ = page_results
-    m = {u["id"]: u for u in out["members"]}
-    first, last = m[out["steps"][0]], m[out["steps"][-1]]
-    assert first["distance_m"] <= min(u["distance_m"] for u in m.values()) + 1e-6
-    assert last["gain"] <= min(u["gain"] for u in m.values()) + 1e-6
-    assert out["atZero"] == out["steps"][0] and out["atOne"] == out["steps"][-1]
+    m = out["members"]
+    first, last = m[0], m[-1]
+    assert first["distance_m"] <= min(u["distance_m"] for u in m) + 1e-6
+    assert last["gain"] <= min(u["gain"] for u in m) + 1e-6
+    assert out["atZero"] == first["id"] and out["atOne"] == last["id"]
+    assert 0 < out["half"] < len(m) - 1
     # the family is deduplicated: no two members share an arc sequence
-    seqs = [tuple(map(tuple, u["arcs"])) for u in m.values()]
+    seqs = [tuple(map(tuple, u["arcs"])) for u in m]
     assert len(set(seqs)) == len(seqs)
-    # and each member is the best of the family under its own weights
-    assert first["cost_shortest"] <= min(u["cost_shortest"] for u in m.values()) + 1e-6
-    half = m[out["half"]]
-    assert half["cost_half"] <= min(u["cost_half"] for u in m.values()) + 1e-6
+    # and no member is dominated by another on both counts
+    for a in m:
+        for b in m:
+            if a is b:
+                continue
+            assert not (b["distance_m"] <= a["distance_m"] - 1e-6
+                        and b["gain"] <= a["gain"] - 1e-6), (a, b)
 
 
 def test_the_family_is_monotone_in_distance_and_climbing(page_results):
     """Sliding right never shortens the route and never adds climbing: the
-    guarantee a length + alpha * gain trade-off gives, and the behaviour the
-    slider's end labels promise."""
+    defining property of a distance/climbing frontier sorted by distance,
+    and the behaviour the slider's end labels promise."""
     out, _ = page_results
-    m = {u["id"]: u for u in out["members"]}
-    seq = [m[i] for i in out["steps"]]
+    seq = out["members"]
     for a, b in zip(seq, seq[1:]):
         assert b["distance_m"] >= a["distance_m"] - 1e-6
         assert b["gain"] <= a["gain"] + 1e-6
@@ -173,33 +184,39 @@ def test_the_share_link_carries_the_trip(page_results):
     assert all(c.isalnum() or c in "._~-" for c in h[1:]), h
 
 
-def test_a_slider_position_matches_python(page_results):
-    """The browser's route at the slider's midpoint costs no more, under
-    Python's own evaluation of the same scaled weights, than Python's route
-    between the same two nodes."""
+def test_the_frontier_contains_every_weighted_optimum(page_results):
+    """Every route a weighted sum length + alpha * climbing would choose is
+    a frontier point, so for each alpha the family's best member must cost
+    no more, under Python's own evaluation, than Python's route for that
+    alpha between the same two nodes. This pins the browser's frontier
+    search to the analysis's cost model."""
     from sf_flat_routes.config import ROUTING_PROFILES, with_alpha
     from sf_flat_routes.pipeline import build_context
     from sf_flat_routes.routing import route
     from sf_flat_routes.utils import configure_gdal_for_proxy
 
     out, _ = page_results
-    half = next(u for u in out["members"] if u["id"] == out["half"])
     configure_gdal_for_proxy()
     ctx = build_context(modes=("walk",))
     graph = ctx.graphs["walk"]
-    w = with_alpha(ROUTING_PROFILES["shortest"], out["alphaHalf"])
-    cost = graph.build_costs(w)
     t = graph.table
     key = {(int(e), d): i for i, (e, d) in enumerate(zip(t["edge_id"], t["direction"]))}
-    arcs = [key[(e, "rev" if r else "fwd")] for e, r in half["arcs"]]
-    js_cost = float(cost[arcs].sum())
-    src = t["from_node"].iloc[arcs[0]]
-    dst = t["to_node"].iloc[arcs[-1]]
-    py_arcs, _ = route(graph, src, dst, w, arc_cost=cost)
-    py_cost = float(cost[py_arcs].sum())
-    # quantisation in the packed graph is ~5 cm per arc
-    assert js_cost <= py_cost + 0.05 * len(arcs) + 1.0
-    assert abs(js_cost - half["cost_half"]) < 0.02 * js_cost + 5.0
+    first = out["members"][0]
+    arcs0 = [key[(e, "rev" if r else "fwd")] for e, r in first["arcs"]]
+    src = t["from_node"].iloc[arcs0[0]]
+    dst = t["to_node"].iloc[arcs0[-1]]
+    for k, alpha in enumerate(out["alphas"]):
+        w = with_alpha(ROUTING_PROFILES["shortest"], alpha)
+        cost = graph.build_costs(w)
+        py_arcs, _ = route(graph, src, dst, w, arc_cost=cost)
+        py_cost = float(cost[py_arcs].sum())
+        best = min(out["members"], key=lambda u: u["costs"][k])
+        arcs = [key[(e, "rev" if r else "fwd")] for e, r in best["arcs"]]
+        js_cost = float(cost[arcs].sum())
+        # the search merges frontier points within 0.5 m of climbing and
+        # tolerates 10 cm per node inside; quantisation adds ~5 cm per arc
+        tol = alpha * (0.5 + 0.1 * len(arcs)) + 0.05 * len(arcs) + 1.0
+        assert js_cost <= py_cost + tol, (alpha, js_cost, py_cost, tol)
 
 
 # ------------------------------------------------------------- the site

@@ -102,6 +102,43 @@ function decodePolylineAt(s, start, end) {
   return out;
 }
 
+/* A binary min-heap of (float key, int value) pairs on typed arrays. */
+class MinHeap {
+  constructor(cap = 1 << 16) { this.k = new Float64Array(cap); this.v = new Int32Array(cap); this.n = 0; }
+  push(key, val) {
+    if (this.n === this.k.length) {
+      const nk = new Float64Array(this.k.length * 2), nv = new Int32Array(this.v.length * 2);
+      nk.set(this.k); nv.set(this.v); this.k = nk; this.v = nv;
+    }
+    const k = this.k, v = this.v;
+    let i = this.n++;
+    k[i] = key; v[i] = val;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (k[p] <= k[i]) break;
+      const tk = k[p], tv = v[p]; k[p] = k[i]; v[p] = v[i]; k[i] = tk; v[i] = tv; i = p;
+    }
+  }
+  /* removes the minimum; its key is left in this.topKey */
+  pop() {
+    const k = this.k, v = this.v;
+    const top = v[0]; this.topKey = k[0];
+    this.n--;
+    if (this.n > 0) {
+      k[0] = k[this.n]; v[0] = v[this.n];
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = l + 1; let m = i;
+        if (l < this.n && k[l] < k[m]) m = l;
+        if (r < this.n && k[r] < k[m]) m = r;
+        if (m === i) break;
+        const tk = k[m], tv = v[m]; k[m] = k[i]; v[m] = v[i]; k[i] = tk; v[i] = tv; i = m;
+      }
+    }
+    return top;
+  }
+}
+
 /* -------------------------------------------------------------- the graph */
 class Graph {
   constructor(bundle, meta) {
@@ -299,6 +336,126 @@ class Graph {
       }
     }
     return targets.map(t => (seen[t] === stamp && done[t]) ? dist[t] : Infinity);
+  }
+
+  /* Reverse adjacency (arcs grouped by head node), built on first use. */
+  reverse() {
+    if (this._rev) return this._rev;
+    const n = this.n, m = this.m;
+    const indptr = new Int32Array(n + 1);
+    for (let a = 0; a < m; a++) indptr[this.head[a] + 1]++;
+    for (let i = 0; i < n; i++) indptr[i + 1] += indptr[i];
+    const arcs = new Int32Array(m), tail = new Int32Array(m), fill = indptr.slice(0, n);
+    for (let u = 0; u < n; u++) {
+      for (let a = this.indptr[u]; a < this.indptr[u + 1]; a++) { tail[a] = u; arcs[fill[this.head[a]]++] = a; }
+    }
+    this._rev = { indptr, arcs, tail };
+    return this._rev;
+  }
+
+  /* Exact lower bound from every node to dst on one per-arc weight (a
+   * reverse Dijkstra), in that weight's own integer units. */
+  boundsTo(dst, mode, weight) {
+    const { indptr, arcs, tail } = this.reverse();
+    const bit = this.modeBit(mode);
+    const dist = new Float64Array(this.n).fill(Infinity);
+    const done = new Uint8Array(this.n);
+    const heap = new MinHeap();
+    dist[dst] = 0; heap.push(0, dst);
+    while (heap.n > 0) {
+      const u = heap.pop(), du = heap.topKey;
+      if (done[u] || du > dist[u]) continue;
+      done[u] = 1;
+      for (let k = indptr[u]; k < indptr[u + 1]; k++) {
+        const a = arcs[k];
+        if ((this.arcFlags[a] & bit) === 0) continue;
+        const v = tail[a], nd = du + weight[a];
+        if (nd < dist[v]) { dist[v] = nd; heap.push(nd, v); }
+      }
+    }
+    return dist;
+  }
+
+  /* The whole distance-versus-climbing frontier between two nodes: every
+   * route that no other route beats on both counts, not only the ones a
+   * weighted sum can reach. This is BOA* (Hernandez et al., bi-objective
+   * A* with lazy dominance checks): labels (node, length, gain) expand in
+   * order of (length + bound, gain + bound), and a label is dropped when it
+   * reaches a node with no less climbing than a label that got there first,
+   * which, because of the expansion order, was also no longer. The check is
+   * one comparison per label, which is what makes the search affordable in
+   * a browser.
+   *
+   * ``eps`` (cm of gain) merges frontier points that differ by less than
+   * that in climbing, which keeps the frontier to a readable size, and
+   * ``epsNode`` applies the same tolerance at intermediate nodes, where it
+   * trades a little exactness (the tolerance can accumulate along a path)
+   * for a much smaller search; ``dCap``
+   * (5 cm units) and ``gCap`` (cm) bound the search to routes no longer
+   * than the flattest route worth showing and no hillier than the shortest.
+   * ``maxLabels`` is a safety valve: the search then stops with the short
+   * end of the frontier, which it finds first.
+   *
+   * Returns a search object; call step(budgetMs) until it reports done, so
+   * the page can keep painting. */
+  pareto(src, dst, mode, { eps = 50, epsNode = eps, dCap = Infinity, gCap = Infinity, maxLabels = 4e6 } = {}) {
+    const g = this;
+    const bit = g.modeBit(mode);
+    const h1 = g.boundsTo(dst, mode, g.arcLen), h2 = g.boundsTo(dst, mode, g.arcGain);
+    const g2min = new Float64Array(g.n).fill(Infinity);
+    let cap = 1 << 16;
+    let lNode = new Int32Array(cap), lG1 = new Int32Array(cap), lG2 = new Int32Array(cap),
+      lParent = new Int32Array(cap), lArc = new Int32Array(cap);
+    let nl = 0;
+    const grow = () => {
+      cap *= 2;
+      const r = (old, T) => { const a = new T(cap); a.set(old); return a; };
+      lNode = r(lNode, Int32Array); lG1 = r(lG1, Int32Array); lG2 = r(lG2, Int32Array);
+      lParent = r(lParent, Int32Array); lArc = r(lArc, Int32Array);
+    };
+    const K = 1 << 20;   // f1 in the high bits, f2 in the low: expansion order (f1, f2)
+    const heap = new MinHeap();
+    const add = (node, g1, g2, parent, arc) => {
+      if (nl === cap) grow();
+      lNode[nl] = node; lG1[nl] = g1; lG2[nl] = g2; lParent[nl] = parent; lArc[nl] = arc;
+      heap.push((g1 + h1[node]) * K + Math.min(g2 + h2[node], K - 1), nl);
+      nl++;
+    };
+    const search = { solutions: [], done: false, expanded: 0, labels: 0, truncated: false };
+    if (src === dst || !Number.isFinite(h1[src])) { search.done = true; return search; }
+    add(src, 0, 0, -1, -1);
+
+    search.step = (budgetMs = 30) => {
+      const t0 = performance.now();
+      let n = 0;
+      while (heap.n > 0) {
+        if ((++n & 1023) === 0 && performance.now() - t0 > budgetMs) return false;
+        const x = heap.pop();
+        const node = lNode[x], g1 = lG1[x], g2 = lG2[x];
+        if (g2 + (node === dst ? eps : epsNode) > g2min[node] || g2 + h2[node] + eps > g2min[dst]) continue;
+        g2min[node] = g2;
+        search.expanded++;
+        if (node === dst) {
+          const arcs = [];
+          for (let y = x; lParent[y] >= 0; y = lParent[y]) arcs.push(lArc[y]);
+          arcs.reverse();
+          search.solutions.push({ arcs, length: g1 / g.DM, gain: g2 / g.CM });
+          continue;
+        }
+        for (let a = g.indptr[node]; a < g.indptr[node + 1]; a++) {
+          if ((g.arcFlags[a] & bit) === 0) continue;
+          const v = g.head[a], n1 = g1 + g.arcLen[a], n2 = g2 + g.arcGain[a];
+          if (n1 + h1[v] > dCap || n2 + h2[v] > gCap) continue;
+          if (n2 + epsNode > g2min[v] || n2 + h2[v] + eps > g2min[dst]) continue;
+          add(v, n1, n2, x, a);
+        }
+        if (nl > maxLabels) { search.truncated = true; break; }
+      }
+      search.labels = nl;
+      search.done = true;
+      return true;
+    };
+    return search;
   }
 
   /* Arc index for an (edge id, reversed) pair. Built on first use; the map
@@ -526,7 +683,7 @@ class Grid {
 
 
 window.Graph = Graph; window.Geometry = Geometry; window.Grid = Grid;
-window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle;
+window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle; window.MinHeap = MinHeap;
 
 /* San Francisco flat routes -- the route page.
  *
@@ -536,17 +693,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
  * graph's own street names plus Overture places and addresses packed into
  * the bundle (see sf_flat_routes/places.py).
  *
- * The slider is a family of routes, not one route. Each position minimises
- * length + alpha * climbing for one value of alpha, the metres of walking a
- * metre of climb is worth, from 0 (the shortest path) to effectively
- * infinite (the least climbing possible). A one-parameter trade-off of this
- * form is monotone: as alpha grows the route can only get longer and climb
- * less, never the reverse, so the slider does exactly what its ends say.
- * (An earlier version scaled the analysis's balanced objective, whose
- * steepness penalties and comfort-weighted length broke that guarantee:
- * the flattest route could be shorter than its neighbour.) Routes are
- * solved for every position when the endpoints change, so dragging is
- * instant, and the map crossfades between neighbouring members.
+ * The slider is a family of routes, not one route: the whole frontier of
+ * distance against climbing between the two points, every route that no
+ * other route beats on both counts, sorted from shortest to flattest. A
+ * weighted sum (length + alpha * climbing, swept over alpha) finds only the
+ * frontier's convex hull and jumps straight across its dents, which on
+ * some trips is most of the interesting routes; the frontier is found by a
+ * bi-objective search instead (Graph.pareto in engine.js). Along it,
+ * distance only ever grows and climbing only ever falls, so the slider does
+ * exactly what its ends say. The shortest route appears at once and the
+ * rest fills in over the next second or so; dragging is then instant, and
+ * the map crossfades between neighbouring members.
  */
 "use strict";
 
@@ -557,12 +714,18 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
 
   /* lambda sweep for the slider; the min-climb objective is appended as
    * the last stop so the right-hand end is literally "fewest feet climbed" */
-  /* alpha sweep, in metres of walking per metre of climb. 14 is the
-   * analysis's balanced weight and 120 its minimum-climb weight. The sweep
-   * stops at 200: past that the router starts walking miles to save a few
-   * feet (7.5 miles instead of 4.6 to save 55 ft, on the default trip),
-   * which nobody would call a route. */
-  const ALPHAS = [0, 2, 4, 6, 8, 10, 12, 14, 17, 20, 24, 28, 33, 40, 48, 56, 66, 78, 90, 105, 120, 140, 165, 200];
+  /* The flat end of the frontier is where a metre of climb is worth
+   * ALPHA_MAX metres of walking (the analysis's minimum-climb weight is
+   * 120). Past about 200 the router starts walking miles to save a few feet
+   * (7.5 miles instead of 4.6 to save 55 ft, on the default trip), which
+   * nobody would call a route, so the frontier is cut there. */
+  const ALPHA_MAX = 200;
+  /* frontier points closer than this in climbing are merged */
+  const EPS_GAIN_CM = 50;
+  /* the same tolerance inside the search, at intermediate nodes */
+  const EPS_NODE_CM = 10;
+  /* at most this many routes on the slider, spread evenly along the frontier */
+  const MAX_ROUTES = 30;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -1014,6 +1177,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     recompute(fit) {
       const { from, to, mode } = this.state;
       this.family = null;
+      const gen = ++this._gen;
       if (!from || !to) {
         this.clearRoute();
         $("status").textContent = !from && !to ? "Type two places, or click the map twice."
@@ -1021,45 +1185,79 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         return;
       }
       if (from.node === to.node) { this.clearRoute(); $("status").textContent = "Those are the same corner."; return; }
-      $("status").textContent = "Routing…";
       const g = this.graph;
-      const steps = [];
-      const unique = [];
-      const byKey = new Map();
-      const stops = ALPHAS.map((a) => this.weights(a));
-      for (const w of stops) {
-        const r = g.route(from.node, to.node, mode, w);
-        if (!r) { steps.push(-1); continue; }
-        const key = r.arcs.join(",");
-        let id = byKey.get(key);
-        if (id === undefined) {
-          id = unique.length; byKey.set(key, id);
-          const s = g.summarise(r.arcs);
-          unique.push({ id, arcs: r.arcs, stats: s, latlngs: g.geometry(r.arcs, this.geom),
-            profile: resample(s.profile, 160) });
-        }
-        steps.push(id);
-      }
-      if (!unique.length) {
+      const shortest = g.route(from.node, to.node, mode, this.weights(0));
+      if (!shortest) {
         this.clearRoute();
         $("status").textContent = mode === "bike" ? "No bikeable route between those points."
           : "No route between those points.";
         return;
       }
-      for (let i = 0; i < steps.length; i++) if (steps[i] < 0) steps[i] = i ? steps[i - 1] : steps.find((v) => v >= 0);
-      this.family = { steps, unique, shortest: unique[steps[0]] };
-      // a new family numbers its members from 0 again, so whatever was on
-      // the map belongs to the old trip and must not be mistaken for a
-      // member of this one
+      // the shortest and the flattest routes go up at once, so the map can
+      // be fitted to the whole family; the frontier fills in between them
+      const first = this.member(shortest.arcs);
+      const flat = g.route(from.node, to.node, mode, this.weights(ALPHA_MAX)) || shortest;
+      const fm = this.member(flat.arcs);
+      const flatStats = fm.stats;
+      const sameEnds = fm.arcs.length === first.arcs.length && fm.arcs.every((a, i) => a === first.arcs[i]);
+      this.family = { unique: sameEnds ? [first] : [first, fm], shortest: first, partial: true };
+      this.family.unique.forEach((m, i) => { m.id = i; });
       this.shown = null;
-      $("status").textContent = unique.length === 1
-        ? "One route: the shortest is already the flattest."
-        : unique.length + " distinct routes, from shortest to flattest.";
+      $("status").textContent = "Finding every route between shortest and flattest…";
+      $("sl").disabled = true;
       this.drawFamily();
       this.show(true);
       if (fit === true || (fit === "auto" && !this.inView())) this.fit();
       this.writeHash();
       $("share").hidden = false; $("sharebox").hidden = true;
+
+      const search = g.pareto(from.node, to.node, mode, {
+        eps: EPS_GAIN_CM, epsNode: EPS_NODE_CM,
+        dCap: Math.round(flatStats.distance_m * g.DM) + 1,
+        gCap: Math.round(first.stats.elev_gain_m * g.CM) + 1,
+      });
+      const run = () => {
+        if (gen !== this._gen) return;          // the trip changed underneath us
+        if (!search.step(30)) {
+          $("status").textContent = "Finding every route between shortest and flattest… "
+            + search.solutions.length;
+          setTimeout(run, 0);
+          return;
+        }
+        this.finishFamily(search, first, fm, fit);
+      };
+      setTimeout(run, 0);
+    },
+
+    member(arcs) {
+      const s = this.graph.summarise(arcs);
+      return { arcs, stats: s, latlngs: this.graph.geometry(arcs, this.geom),
+        profile: resample(s.profile, 160) };
+    },
+
+    /* the frontier is in, sorted shortest to flattest: pick the routes the
+     * slider will step through */
+    finishFamily(search, first, fm, fit) {
+      let members = search.solutions.map((r) => this.member(r.arcs));
+      if (!members.length) members = [first];
+      members.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
+      // The weighted flattest route is a frontier point by construction.
+      // The search's tolerances can leave it out by a few feet, and if the
+      // search was cut short it is missing altogether, so it closes the
+      // family whenever it beats what the search found.
+      const last = members[members.length - 1];
+      if (fm.stats.elev_gain_m < last.stats.elev_gain_m - 1e-6) members.push(fm);
+      this._search = search;
+      members = thinFrontier(members, MAX_ROUTES);
+      members.forEach((m, i) => { m.id = i; });
+      this.family = { unique: members, shortest: members[0], partial: false };
+      $("sl").disabled = false;
+      $("status").textContent = members.length === 1
+        ? "One route: the shortest is already the flattest."
+        : members.length + " distinct routes, from shortest to flattest.";
+      this.drawFamily();
+      this.show(false);
+      if (fit && !this.inView()) this.fit();
     },
 
     clearRoute() {
@@ -1067,16 +1265,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.shown = null;
       $("result").hidden = true; $("prof").hidden = true; $("delta").textContent = ""; $("slpos").textContent = "";
       $("share").hidden = true; $("sharebox").hidden = true;
+      $("sl").disabled = false;
     },
 
-    /* The slider runs evenly over the *distinct* routes rather than over
-     * alpha: most alpha values repeat a neighbour's route, and a thumb that
-     * does nothing for half its travel feels broken. Returns the first step
-     * (lowest alpha) at which the chosen route is optimal. */
+    /* slider position -> index into the family, evenly over its members */
     stepAt(t) {
-      const { steps, unique } = this.family;
-      const k = clamp(Math.round(t * (unique.length - 1)), 0, unique.length - 1);
-      return steps.indexOf(k);
+      const n = this.family.unique.length;
+      return clamp(Math.round(t * (n - 1)), 0, n - 1);
     },
 
     drawFamily() {
@@ -1090,11 +1285,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     /* show the family member for the current slider position */
     show(immediate) {
       if (!this.family) return;
-      const t = this.state.t, step = this.stepAt(t);
-      const u = this.family.unique[this.family.steps[step]];
+      const t = this.state.t, step = this.stepAt(t), n = this.family.unique.length;
+      const u = this.family.unique[step];
       const colour = ramp(t);
-      $("slpos").textContent = step === 0 ? "distance only"
-        : "1 ft up = " + ALPHAS[step] + " ft along";
+      $("slpos").textContent = this.family.partial ? "" : (n === 1 ? "" : (step + 1) + " of " + n);
       const prev = this.shown;
       if (prev === u) { this.tintRoute(colour); return; }
       this.shown = u;
@@ -1287,6 +1481,31 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   }
 
   /* ------------------------------------------------------------- helpers */
+  /* Keep at most k members, spread evenly along the frontier's length in
+   * normalised (distance, climbing) space, always keeping both ends. */
+  function thinFrontier(members, k) {
+    const n = members.length;
+    if (n <= k) return members;
+    const d = members.map((m) => m.stats.distance_m), c = members.map((m) => m.stats.elev_gain_m);
+    const dr = Math.max(1e-9, d[n - 1] - d[0]), cr = Math.max(1e-9, c[0] - c[n - 1]);
+    const cum = [0];
+    for (let i = 1; i < n; i++) {
+      cum.push(cum[i - 1] + Math.hypot((d[i] - d[i - 1]) / dr, (c[i] - c[i - 1]) / cr));
+    }
+    const total = cum[n - 1], out = [], used = new Set();
+    for (let j = 0; j < k; j++) {
+      const target = total * j / (k - 1);
+      let best = -1, bestErr = Infinity;
+      for (let i = 0; i < n; i++) {
+        if (used.has(i)) continue;
+        const err = Math.abs(cum[i] - target);
+        if (err < bestErr) { bestErr = err; best = i; }
+      }
+      used.add(best); out.push(members[best]);
+    }
+    return out.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
+  }
+
   function resample(prof, n) {
     const { d, z } = prof;
     const out = new Float64Array(n);
@@ -1315,7 +1534,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     tween(ms, (k) => { pairs.forEach(([l, o]) => l.setStyle({ opacity: o * k })); });
   }
 
-  App.alphas = ALPHAS;
+  App.ALPHA_MAX = ALPHA_MAX; App._gen = 0;
   window.App = App;
   App.start().catch((err) => {
     console.error(err);
