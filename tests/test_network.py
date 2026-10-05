@@ -67,6 +67,32 @@ def test_later_rule_overrides_an_earlier_general_one():
     assert evaluate_access(rules, "foot")["allowed"]
 
 
+def test_a_mode_specific_permit_outranks_a_later_general_restriction():
+    """The Slow Street shape, exactly as Overture carries it for Cabrillo
+    Street: an all-modes destination-only rule comes *after* the explicit
+    foot and bicycle permits and must not override them."""
+    rules = [rule("allowed", mode=["foot"]),
+             rule("designated", mode=["bicycle"]),
+             rule("allowed", mode=["motor_vehicle"], using=["at_destination"]),
+             rule("allowed", using=["at_destination"])]
+    for mode in ("foot", "bicycle"):
+        r = evaluate_access(rules, mode)
+        assert r["allowed"], mode
+        assert not r["restricted"], mode
+
+
+def test_a_general_restriction_still_applies_without_a_mode_permit():
+    rules = [rule("allowed", mode=["motor_vehicle"], using=["at_destination"]),
+             rule("allowed", using=["at_destination"])]
+    assert not evaluate_access(rules, "foot")["allowed"]
+
+
+def test_a_mode_specific_denial_outranks_an_earlier_general_permit():
+    rules = [rule("allowed"), rule("denied", mode=["foot"])]
+    assert not evaluate_access(rules, "foot")["allowed"]
+    assert evaluate_access(rules, "bicycle")["allowed"]
+
+
 def test_motor_vehicle_denial_does_not_block_walking_or_cycling():
     rules = [rule("allowed", mode=["foot", "bicycle"]),
              rule("denied", mode=["motor_vehicle"])]
@@ -104,3 +130,25 @@ def test_flags_collects_values_from_nested_arrays():
 
 def test_flags_of_empty_input():
     assert _flags(None) == set()
+
+
+# ------------------------------------------------- the built graph (if present)
+import pytest  # noqa: E402
+
+from sf_flat_routes.config import PROCESSED_DIR  # noqa: E402
+
+
+@pytest.mark.skipif(not (PROCESSED_DIR / "edges_metrics.parquet").exists(),
+                    reason="processed network not built")
+def test_slow_streets_are_walkable_and_bikeable():
+    """Cabrillo, Page, Shotwell and 12th Avenue are SF Slow Streets: closed
+    to through traffic, open to everyone else. The access parser once read
+    their all-modes destination rule as closing them to walking."""
+    import pandas as pd
+    e = pd.read_parquet(PROCESSED_DIR / "edges_metrics.parquet",
+                        columns=["name", "cls", "walk_ok", "bike_ok", "length_m"])
+    for street in ("Cabrillo Street", "Page Street", "Shotwell Street"):
+        s = e[(e["name"] == street) & (e["cls"] == "residential")]
+        assert len(s) > 20, street
+        assert s["walk_ok"].mean() > 0.95, (street, s["walk_ok"].mean())
+        assert s["bike_ok"].mean() > 0.95, (street, s["bike_ok"].mean())

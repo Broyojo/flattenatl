@@ -16,6 +16,14 @@ actually present in San Francisco are:
   explicit per-mode permissions.
 * ``recognized=[as_private]`` or ``using=[as_customer|at_destination]`` --
   private or destination-only access; excluded from through routing.
+
+A rule that names a mode outranks a rule that applies to every mode,
+whatever order they appear in.  San Francisco's Slow Streets (Page,
+Shotwell, Cabrillo, 12th Avenue) arrive as "foot allowed, bicycle
+designated, motor vehicles at destination only, everything at destination
+only", in that order; reading them in document order let the final
+all-modes rule close the street to walking, which is the opposite of what a
+Slow Street is.
 """
 from __future__ import annotations
 
@@ -92,18 +100,21 @@ def evaluate_access(restrictions, mode: str, default: bool = True) -> dict:
     ``oneway_forward_only`` (backward travel prohibited) and ``restricted``
     (access is conditional/private).
 
-    Rules are applied in document order so that a later, more specific rule
-    overrides an earlier general one.  Rules carrying ``between`` apply to
-    only part of the segment; they are recorded but do not veto the whole
-    segment, because vetoing would delete usable street from the network.
+    Rules that apply to every mode are resolved first and rules that name
+    ``mode`` after them, each group in document order, so a mode-specific
+    rule always has the last word over a general one.  Rules carrying
+    ``between`` apply to only part of the segment; they are recorded but do
+    not veto the whole segment, because vetoing would delete usable street
+    from the network.
     """
     allowed = default
     oneway_forward_only = False
     restricted = False
     partial = False
 
-    for rule in _as_list(restrictions):
-        rule = _as_dict(rule)
+    rules = [_as_dict(r) for r in _as_list(restrictions)]
+    rules.sort(key=lambda r: 0 if _rule_modes(r) is None else 1)   # stable
+    for rule in rules:
         if not _rule_applies(rule, mode):
             continue
         when = _as_dict(rule.get("when"))
@@ -136,6 +147,10 @@ def evaluate_access(restrictions, mode: str, default: bool = True) -> dict:
             partial = True
             continue
         allowed = atype in _PERMIT
+        if allowed and _rule_modes(rule) is not None:
+            # an unconditional permit naming this mode also lifts a general
+            # private/destination restriction read earlier
+            restricted = False
 
     return {"allowed": allowed, "oneway_forward_only": oneway_forward_only,
             "restricted": restricted, "partial_rules": partial}
