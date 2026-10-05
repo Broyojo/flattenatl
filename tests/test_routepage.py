@@ -255,6 +255,10 @@ def test_the_site_loads_its_graph_over_http(served_site):
     assert not out["inline"] and out["url"].startswith("data/graph-")
     assert out["hillshade"].startswith("data/hillshade-") and out["shade"] > 1000
     assert out["routes"] >= 2
-    for name in ("app.js", "app.css", "leaflet.js", "leaflet.css", "favicon.svg",
-                 ".nojekyll", out["url"], out["hillshade"]):
+    import re
+    index = SITE_INDEX.read_text(encoding="utf-8")
+    refs = re.findall(r'(?:href|src)="([^"]+)"', index)
+    local = [r for r in refs if not r.startswith("http")]
+    assert any(re.match(r"app-[0-9a-f]{10}\.js$", r) for r in local), local
+    for name in local + [".nojekyll", out["url"], out["hillshade"]]:
         assert (SITE_INDEX.parent / name).exists(), name

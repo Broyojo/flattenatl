@@ -20,6 +20,7 @@ same cost model Python uses.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -193,18 +194,22 @@ def _render(payload: dict) -> str:
     return html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
 
 
-def _route_page_html(payload: dict, linked: bool) -> str:
-    """The route page: assets inlined (one file) or linked (the site)."""
+def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) -> str:
+    """The route page: assets inlined (one file) or linked (the site).
+
+    ``assets`` maps each plain asset name to its content-hashed file name.
+    """
     html = _asset("simple.html").replace("/*__REPO_URL__*/", REPO_URL)
     if linked:
+        a = assets or {}
         html = html.replace('<style>/*__LEAFLET_CSS__*/</style>',
-                            '<link rel="stylesheet" href="leaflet.css">')
+                            f'<link rel="stylesheet" href="{a.get("leaflet.css", "leaflet.css")}">')
         html = html.replace('<style>/*__APP_CSS__*/</style>',
-                            '<link rel="stylesheet" href="app.css">')
+                            f'<link rel="stylesheet" href="{a.get("app.css", "app.css")}">')
         html = html.replace('<script>/*__LEAFLET_JS__*/</script>',
-                            '<script src="leaflet.js"></script>')
+                            f'<script src="{a.get("leaflet.js", "leaflet.js")}"></script>')
         html = html.replace('<script>/*__APP_JS__*/</script>',
-                            '<script src="app.js"></script>')
+                            f'<script src="{a.get("app.js", "app.js")}"></script>')
         extra = "\n".join([
             f'<link rel="canonical" href="{SITE_URL}">',
             '<link rel="icon" href="favicon.svg" type="image/svg+xml">',
@@ -320,11 +325,28 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
                                            "data_uri": hillshade["data_uri"]})
     SIMPLE_HTML.write_text(_route_page_html(inline, linked=False), encoding="utf-8")
 
-    # the static site: fetchable, cacheable files, content-hashed data names
+    # the static site: fetchable, cacheable files. Everything the page
+    # references carries a content hash in its name, so a browser that cached
+    # yesterday's app.js cannot run it against today's index.html.
     data_dir = SITE_DIR / "data"
     if data_dir.exists():
         shutil.rmtree(data_dir)
     data_dir.mkdir(parents=True)
+    for stale in SITE_DIR.glob("*-*.??*"):
+        if re.match(r"^(app|leaflet)-[0-9a-f]{10}\.(js|css)$", stale.name):
+            stale.unlink()
+
+    def hashed(stem: str, ext: str, text: str) -> str:
+        name = f"{stem}-{hashlib.sha1(text.encode('utf-8')).hexdigest()[:10]}.{ext}"
+        (SITE_DIR / name).write_text(text, encoding="utf-8")
+        return name
+
+    assets = {
+        "app.css": hashed("app", "css", _asset("simple.css")),
+        "app.js": hashed("app", "js", _asset("engine.js") + "\n" + _asset("simple.js")),
+        "leaflet.css": hashed("leaflet", "css", _vendor("leaflet-1.9.4.css")),
+        "leaflet.js": hashed("leaflet", "js", _vendor("leaflet-1.9.4.min.js")),
+    }
     gz = packed["gz"]
     gz_name = f"graph-{hashlib.sha1(gz).hexdigest()[:10]}.bin.gz"
     (data_dir / gz_name).write_bytes(gz)
@@ -336,12 +358,10 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
         linked["hillshade"] = {"bounds": hillshade["bounds"], "url": "data/" + png_name}
     else:
         linked["hillshade"] = None
-    SITE_INDEX.write_text(_route_page_html(linked, linked=True), encoding="utf-8")
-    (SITE_DIR / "app.css").write_text(_asset("simple.css"), encoding="utf-8")
-    (SITE_DIR / "app.js").write_text(_asset("engine.js") + "\n" + _asset("simple.js"),
-                                     encoding="utf-8")
-    (SITE_DIR / "leaflet.css").write_text(_vendor("leaflet-1.9.4.css"), encoding="utf-8")
-    (SITE_DIR / "leaflet.js").write_text(_vendor("leaflet-1.9.4.min.js"), encoding="utf-8")
+    SITE_INDEX.write_text(_route_page_html(linked, linked=True, assets=assets),
+                          encoding="utf-8")
+    for plain in ("app.css", "app.js", "leaflet.css", "leaflet.js"):
+        (SITE_DIR / plain).unlink(missing_ok=True)
     (SITE_DIR / "favicon.svg").write_text(_FAVICON, encoding="utf-8")
     (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")
     site_bytes = sum(f.stat().st_size for f in SITE_DIR.rglob("*") if f.is_file())
