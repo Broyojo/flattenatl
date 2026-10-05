@@ -25,7 +25,7 @@ OUTPUT_DIR = Path(_RUN_DIR) / "outputs" if _RUN_DIR else PROJECT_ROOT / "outputs
 SITE_DIR = Path(_RUN_DIR) / "site" if _RUN_DIR else PROJECT_ROOT / "site"
 #: The product is "flattensf"; the Python package keeps its older name.
 PRODUCT_NAME = "flattensf"
-REPO_URL = "https://github.com/almostimplemented/minihill"
+REPO_URL = "https://github.com/almostimplemented/flattensf"
 SITE_DOMAIN = "flattensf.com"
 SITE_URL = f"https://{SITE_DOMAIN}/"
 

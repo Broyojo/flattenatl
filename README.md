@@ -469,7 +469,7 @@ Both substitutions are recorded in the dataset registry and flagged
 Python 3.10+.
 
 ```bash
-git clone <this repo> && cd minihill
+git clone https://github.com/almostimplemented/flattensf && cd flattensf
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt        # or: pip install -e ".[dev]"
 ```
