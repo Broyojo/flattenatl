@@ -241,13 +241,16 @@ _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 """
 
 
-#: Where the route page opens before anyone types: a walk whose shortest
-#: path climbs over the northern hills and whose flattest path does not.
-#: Resolved against the place index at build time; the neighborhood access
-#: points are the fallback.
+#: Where the route page opens before anyone types. Chosen by scoring every
+#: pair of ~55 notable, non-touristy places on the frontier search: this
+#: one is a 5-mile walk whose shortest path goes straight over Twin Peaks,
+#: whose flattest path saves 60% of the climbing for 17% more distance, and
+#: whose frontier holds a hundred distinct routes fanned across the middle
+#: of the city. Resolved against the place index at build time; the
+#: neighborhood access points are the fallback.
 _DEFAULT_TRIP = (
-    ("Dolores Park", ("Mission Dolores Park", "Dolores Park"), "Mission"),
-    ("Marina Green", ("Marina Green", "Fort Mason"), "Marina"),
+    ("Bernal Heights Park", ("Bernal Heights Park",), "Bernal Heights"),
+    ("Stow Lake", ("Stow Lake", "Stow Lake Bridge"), "Golden Gate Park"),
 )
 
 
