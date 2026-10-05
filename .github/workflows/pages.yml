@@ -1,8 +1,10 @@
 # Publishes site/ (the built route finder) to GitHub Pages.
 #
 # The site is committed already built, because building it needs the
-# cached lidar and Overture data (~750 MB) that CI does not have. One-time
-# setup: repository Settings -> Pages -> Source: "GitHub Actions".
+# cached lidar and Overture data (~750 MB) that CI does not have. The
+# configure step enables Pages (source: GitHub Actions) on first run; if the
+# plan does not allow Pages for a private repository, make the repository
+# public or set it up under Settings -> Pages.
 name: Deploy the route finder
 
 on:
@@ -29,6 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
