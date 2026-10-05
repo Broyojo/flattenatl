@@ -241,22 +241,25 @@ _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 """
 
 
-#: Where the route page opens before anyone types. Chosen by scoring every
-#: pair of ~55 notable, non-touristy places on the frontier search: this
-#: one is a 5-mile walk whose shortest path goes straight over Twin Peaks,
-#: whose flattest path saves 60% of the climbing for 17% more distance, and
-#: whose frontier holds a hundred distinct routes fanned across the middle
-#: of the city. Resolved against the place index at build time; the
-#: neighborhood access points are the fallback.
+#: Where the route page opens before anyone types: Trick Dog, in the
+#: Mission, to Naga & the Captainess, the 100-foot sea-serpent sculpture in
+#: the Rainbow Falls pond on JFK Promenade in Golden Gate Park. Chosen by
+#: scoring every pair of well-known Mission bars and Golden Gate Park spots
+#: on the frontier search: the shortest path climbs over the Castro and
+#: Buena Vista hills, the flattest saves about half the climbing for 10%
+#: more distance, and the frontier holds some eighty distinct routes.
+#: Each entry is (label, place names to try in order, fallback), where the
+#: fallback is a neighborhood access point or a (lon, lat) pair for a spot
+#: the index does not carry.
 _DEFAULT_TRIP = (
-    ("Bernal Heights Park", ("Bernal Heights Park",), "Bernal Heights"),
-    ("Stow Lake", ("Stow Lake", "Stow Lake Bridge"), "Golden Gate Park"),
+    ("Trick Dog", ("Trick Dog",), "Mission"),
+    ("Naga (the dragon), Golden Gate Park", (), (-122.4779, 37.7716)),
 )
 
 
 def _default_trip(places: dict | None, points: dict) -> list[dict]:
     out = []
-    for label, names, nb in _DEFAULT_TRIP:
+    for label, names, fallback in _DEFAULT_TRIP:
         hit = None
         if places:
             for want in names:
@@ -266,9 +269,11 @@ def _default_trip(places: dict | None, points: dict) -> list[dict]:
                         break
                 if hit:
                     break
-        if hit is None and nb in points.get("walk", {}):
-            lon, lat = points["walk"][nb]
-            hit = {"label": nb, "lon": lon, "lat": lat}
+        if hit is None and isinstance(fallback, tuple):
+            hit = {"label": label, "lon": fallback[0], "lat": fallback[1]}
+        if hit is None and fallback in points.get("walk", {}):
+            lon, lat = points["walk"][fallback]
+            hit = {"label": label, "lon": lon, "lat": lat}
         if hit is None:
             return []
         out.append(hit)
