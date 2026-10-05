@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import OUTPUT_DIR, REPO_URL, SITE_DIR, SITE_URL
+from .config import OUTPUT_DIR, PRODUCT_NAME, REPO_URL, SITE_DIR, SITE_DOMAIN, SITE_URL
 from .utils import get_logger, human_bytes, step
 
 log = get_logger("sf_flat_routes.viz_interactive")
@@ -214,10 +214,11 @@ def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) ->
             f'<link rel="canonical" href="{SITE_URL}">',
             '<link rel="icon" href="favicon.svg" type="image/svg+xml">',
             '<meta property="og:type" content="website">',
-            '<meta property="og:title" content="San Francisco Flat Routes">',
-            '<meta property="og:description" content="Find the flattest walking or '
-            'cycling route between any two places in San Francisco, and slide '
-            'between it and the shortest one.">',
+            f'<meta property="og:title" content="{PRODUCT_NAME}">',
+            '<meta property="og:site_name" content="flattensf">',
+            '<meta property="og:description" content="The flattest walking or '
+            'cycling route between any two places in San Francisco, and every '
+            'route between it and the shortest one.">',
             f'<meta property="og:url" content="{SITE_URL}">',
             f'<meta property="og:image" content="{SITE_URL}preview.png">',
             '<meta name="twitter:card" content="summary_large_image">',
@@ -364,6 +365,9 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
         (SITE_DIR / plain).unlink(missing_ok=True)
     (SITE_DIR / "favicon.svg").write_text(_FAVICON, encoding="utf-8")
     (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")
+    # GitHub Pages reads the custom domain from here on branch deploys and
+    # from Settings -> Pages on Actions deploys; shipping it covers both
+    (SITE_DIR / "CNAME").write_text(SITE_DOMAIN + "\n", encoding="utf-8")
     site_bytes = sum(f.stat().st_size for f in SITE_DIR.rglob("*") if f.is_file())
     log.info("wrote %s (%s) and the site in %s (%s)", SIMPLE_HTML.name,
              human_bytes(SIMPLE_HTML.stat().st_size), SITE_DIR.name, human_bytes(site_bytes))

@@ -23,8 +23,11 @@ PROCESSED_DIR = Path(_RUN_DIR) / "processed" if _RUN_DIR else DATA_DIR / "proces
 OUTPUT_DIR = Path(_RUN_DIR) / "outputs" if _RUN_DIR else PROJECT_ROOT / "outputs"
 #: The route finder as a static site, deployed to GitHub Pages from here.
 SITE_DIR = Path(_RUN_DIR) / "site" if _RUN_DIR else PROJECT_ROOT / "site"
+#: The product is "flattensf"; the Python package keeps its older name.
+PRODUCT_NAME = "flattensf"
 REPO_URL = "https://github.com/almostimplemented/minihill"
-SITE_URL = "https://almostimplemented.github.io/minihill/"
+SITE_DOMAIN = "flattensf.com"
+SITE_URL = f"https://{SITE_DOMAIN}/"
 
 for _d in (RAW_DIR, PROCESSED_DIR, OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)

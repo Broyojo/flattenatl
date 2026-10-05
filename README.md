@@ -1,7 +1,11 @@
-# San Francisco Flat Routes
+# flattensf
 
-Finding the city's hidden network of relatively flat streets: the routes that
-connect San Francisco's neighborhoods while climbing as little as possible.
+**[flattensf.com](https://flattensf.com/)**: the flattest route between any
+two places in San Francisco, and every route between it and the shortest.
+
+Behind it, an analysis of the city's hidden network of relatively flat
+streets: the routes that connect San Francisco's neighborhoods while
+climbing as little as possible.
 
 ![San Francisco's low-elevation backbone](outputs/sf_flat_backbone.png)
 
@@ -24,7 +28,7 @@ the checks against known ground truth are in
 
 ## The route finder
 
-**Live: [almostimplemented.github.io/minihill](https://almostimplemented.github.io/minihill/)**
+**Live: [flattensf.com](https://flattensf.com/)**
 
 Type where you are and where you are going, then drag the slider from
 **shortest** to **flattest** and watch the route change. Every position is a
@@ -497,10 +501,15 @@ python -m sf_flat_routes report         # written analysis
 lidar and Overture data that CI does not have. The workflow in
 [`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes that
 directory to GitHub Pages on every push that touches it. One-time setup in
-the repository: Settings → Pages → Source: **GitHub Actions**. Any other
-static host works the same way: upload `site/` and nothing else. The page
-URL used for the social-preview tags is `SITE_URL` in
-[`config.py`](sf_flat_routes/config.py); change it if the site moves.
+the repository: Settings → Pages → Source: **GitHub Actions**, then under
+Custom domain enter `flattensf.com` and tick "Enforce HTTPS" once the
+certificate is issued. At the registrar, point the apex at GitHub Pages
+(A records 185.199.108.153, 185.199.109.153, 185.199.110.153,
+185.199.111.153, and the matching AAAA records if you want IPv6) and add a
+CNAME from `www` to `almostimplemented.github.io`. Any other static host
+works the same way: upload `site/` and nothing else. The domain and the
+page URL used for the social-preview tags are `SITE_DOMAIN` and
+`SITE_URL` in [`config.py`](sf_flat_routes/config.py).
 
 Add `--force` to recompute a stage instead of using its cache. Ad-hoc
 routing:
@@ -574,7 +583,7 @@ sf_flat_routes/
   web/                their HTML, CSS and JavaScript: the shared router
                       (engine.js), the route finder (simple.js), the
                       explorer (app.js) and the warped city (warp.js)
-site/                 the route finder as a static site (built; deployed
+site/                 flattensf.com as a static site (built; deployed
                       to GitHub Pages by .github/workflows/pages.yml)
   sensitivity.py      rebuilds the pipeline under perturbed parameters
   report.py           generates outputs/findings.md from the outputs
