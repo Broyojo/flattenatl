@@ -68,6 +68,9 @@ _SCRIPT = """(queries) => {
         hasAddresses: !!App.index.addr,
         frontier: { solutions: App._search.solutions.length, labels: App._search.labels,
                     expanded: App._search.expanded, truncated: App._search.truncated },
+        snap: (() => { const p = App.pointAt(-122.58, 37.76); const g = App.graph;
+            return p ? { node: p.node, pinLon: p.lon, pinLat: p.lat,
+                         nodeLon: g.nodeLon(p.node), nodeLat: g.nodeLat(p.node) } : { node: -1 }; })(),
     };
 }"""
 
@@ -174,6 +177,17 @@ def test_a_new_trip_replaces_the_drawn_route_at_once(page_results):
     out, _ = page_results
     r = out["retarget"]
     assert r["member"] and r["sameAsShown"] and r["endsAtCoit"], r
+
+
+def test_a_click_in_the_bay_snaps_to_the_nearest_corner(page_results):
+    """The pin and the route start must agree, even for a click far
+    outside the street network."""
+    out, _ = page_results
+    r = out["snap"]
+    assert r["node"] >= 0
+    assert abs(r["pinLon"] - r["nodeLon"]) < 1e-9 and abs(r["pinLat"] - r["nodeLat"]) < 1e-9
+    # the Pacific, 6 km west of Ocean Beach, lands on the western shore
+    assert r["nodeLon"] > -122.52 and abs(r["nodeLat"] - 37.76) < 0.03
 
 
 def test_the_share_link_carries_the_trip(page_results):

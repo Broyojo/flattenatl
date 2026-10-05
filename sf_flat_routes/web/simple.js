@@ -361,10 +361,15 @@
       const bit = this.graph.modeBit(this.state.mode);
       return this.nodeGrid.nearest(lon, lat, (i) => (this.graph.nodeFlags[i] & bit) !== 0);
     },
+    /* A point is always a routable street corner: whatever was clicked or
+     * searched snaps to the nearest one, so the pin sits where the route
+     * actually starts rather than in the bay or the middle of a park. */
     pointAt(lon, lat, label) {
       const node = this.nearestNode(lon, lat);
       if (node < 0) return null;
-      return { lon, lat, node, label: label || ("near " + this.index.describe(node, this.nodeGrid)) };
+      const g = this.graph;
+      return { lon: g.nodeLon(node), lat: g.nodeLat(node), node,
+        label: label || ("near " + this.index.describe(node, this.nodeGrid)) };
     },
     placeToPoint(p) { return this.pointAt(p.lon, p.lat, p.label || p.name); },
 

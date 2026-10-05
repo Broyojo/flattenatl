@@ -668,15 +668,17 @@ class Grid {
 
   nearest(x, y, filter) {
     let best = -1, bestD = Infinity;
+    const consider = (i) => {
+      if (filter && !filter(i)) return;
+      const dx = this.xs[i] - x, dy = this.ys[i] - y;
+      const d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = i; }
+    };
     for (let rings = 1; rings <= 6 && best < 0; rings++) {
-      const cand = this.near(x, y, rings);
-      for (const i of cand) {
-        if (filter && !filter(i)) continue;
-        const dx = this.xs[i] - x, dy = this.ys[i] - y;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; best = i; }
-      }
+      for (const i of this.near(x, y, rings)) consider(i);
     }
+    // nothing within a few cells (a click far out in the bay): scan everything
+    if (best < 0) for (let i = 0; i < this.xs.length; i++) consider(i);
     return best;
   }
 }
