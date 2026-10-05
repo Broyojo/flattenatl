@@ -6,12 +6,17 @@
  * graph's own street names plus Overture places and addresses packed into
  * the bundle (see sf_flat_routes/places.py).
  *
- * The slider is a family of routes, not one route. Each position scales
- * every climbing term of the balanced objective by a factor lambda (the
- * same sweep the analysis uses for its Pareto frontier); the far right is
- * the minimum-climb objective. Routes are solved for every position when
- * the endpoints change, so dragging is instant, and the map crossfades
- * between neighbouring members of the family.
+ * The slider is a family of routes, not one route. Each position minimises
+ * length + alpha * climbing for one value of alpha, the metres of walking a
+ * metre of climb is worth, from 0 (the shortest path) to effectively
+ * infinite (the least climbing possible). A one-parameter trade-off of this
+ * form is monotone: as alpha grows the route can only get longer and climb
+ * less, never the reverse, so the slider does exactly what its ends say.
+ * (An earlier version scaled the analysis's balanced objective, whose
+ * steepness penalties and comfort-weighted length broke that guarantee:
+ * the flattest route could be shorter than its neighbour.) Routes are
+ * solved for every position when the endpoints change, so dragging is
+ * instant, and the map crossfades between neighbouring members.
  */
 "use strict";
 
@@ -22,7 +27,12 @@
 
   /* lambda sweep for the slider; the min-climb objective is appended as
    * the last stop so the right-hand end is literally "fewest feet climbed" */
-  const LAMBDAS = [0, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.7, 1, 1.4, 2, 3, 5, 8, 15];
+  /* alpha sweep, in metres of walking per metre of climb. 14 is the
+   * analysis's balanced weight and 120 its minimum-climb weight. The sweep
+   * stops at 200: past that the router starts walking miles to save a few
+   * feet (7.5 miles instead of 4.6 to save 55 ft, on the default trip),
+   * which nobody would call a route. */
+  const ALPHAS = [0, 2, 4, 6, 8, 10, 12, 14, 17, 20, 24, 28, 33, 40, 48, 56, 66, 78, 90, 105, 120, 140, 165, 200];
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -464,10 +474,11 @@
     hideSuggest(which) { if (this["hide_" + which]) this["hide_" + which](); },
 
     /* ------------------------------------------------------------ routing */
-    weights(lam) {
-      const b = DATA.meta.profiles.balanced;
-      return { alpha: b.alpha * lam, beta: b.beta * lam, gamma: b.gamma * lam,
-        penalties: b.penalties, extreme: b.extreme, use_class_multiplier: lam > 0 };
+    /* length + alpha * gain, on real length (no comfort multipliers), so the
+     * family is a true distance-versus-climbing trade-off */
+    weights(alpha) {
+      return { alpha, beta: 0, gamma: 0, penalties: [0, 0, 0, 0, 0], extreme: 0,
+        use_class_multiplier: false };
     },
 
     recompute(fit) {
@@ -485,7 +496,7 @@
       const steps = [];
       const unique = [];
       const byKey = new Map();
-      const stops = LAMBDAS.map((l) => this.weights(l)).concat([DATA.meta.profiles.min_climb]);
+      const stops = ALPHAS.map((a) => this.weights(a));
       for (const w of stops) {
         const r = g.route(from.node, to.node, mode, w);
         if (!r) { steps.push(-1); continue; }
@@ -507,8 +518,12 @@
       }
       for (let i = 0; i < steps.length; i++) if (steps[i] < 0) steps[i] = i ? steps[i - 1] : steps.find((v) => v >= 0);
       this.family = { steps, unique, shortest: unique[steps[0]] };
+      // a new family numbers its members from 0 again, so whatever was on
+      // the map belongs to the old trip and must not be mistaken for a
+      // member of this one
+      this.shown = null;
       $("status").textContent = unique.length === 1
-        ? "Only one sensible route: it is already as flat as it gets."
+        ? "One route: the shortest is already the flattest."
         : unique.length + " distinct routes, from shortest to flattest.";
       this.drawFamily();
       this.show(true);
@@ -524,9 +539,14 @@
       $("share").hidden = true; $("sharebox").hidden = true;
     },
 
+    /* The slider runs evenly over the *distinct* routes rather than over
+     * alpha: most alpha values repeat a neighbour's route, and a thumb that
+     * does nothing for half its travel feels broken. Returns the first step
+     * (lowest alpha) at which the chosen route is optimal. */
     stepAt(t) {
-      const n = this.family.steps.length;
-      return clamp(Math.round(t * (n - 1)), 0, n - 1);
+      const { steps, unique } = this.family;
+      const k = clamp(Math.round(t * (unique.length - 1)), 0, unique.length - 1);
+      return steps.indexOf(k);
     },
 
     drawFamily() {
@@ -544,10 +564,9 @@
       const u = this.family.unique[this.family.steps[step]];
       const colour = ramp(t);
       $("slpos").textContent = step === 0 ? "distance only"
-        : step === this.family.steps.length - 1 ? "fewest feet climbed"
-          : "1 ft up ≈ " + Math.round(DATA.meta.profiles.balanced.alpha * LAMBDAS[step]) + " ft along";
+        : "1 ft up = " + ALPHAS[step] + " ft along";
       const prev = this.shown;
-      if (prev && prev.id === u.id) { this.tintRoute(colour); return; }
+      if (prev === u) { this.tintRoute(colour); return; }
       this.shown = u;
       this.drawRoute(u, colour, prev && !immediate ? prev : null);
       this.drawStats(u, prev && !immediate ? prev : u);
@@ -766,7 +785,7 @@
     tween(ms, (k) => { pairs.forEach(([l, o]) => l.setStyle({ opacity: o * k })); });
   }
 
-  App.lambdas = LAMBDAS;
+  App.alphas = ALPHAS;
   window.App = App;
   App.start().catch((err) => {
     console.error(err);

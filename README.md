@@ -346,16 +346,27 @@ with viewport culling and a zoom-dependent minimum edge length. 88,000
 individual Leaflet polylines would not have been usable; one canvas pass is.
 
 The route finder's slider is a **family of routes**: when the endpoints
-change it solves sixteen Dijkstras, one per value of a factor λ that scales
-every climbing and grade term of the balanced objective (the same sweep the
-Pareto analysis uses, so λ = 0 is the true shortest path), plus the
-minimum-climb objective as the right-hand anchor. Identical routes are
-merged, so the slider steps through only the distinct ones, and the map
-crossfades between neighbours while the profile and the numbers tween. That
-takes about 150 ms, after which dragging is free. A genuinely continuous
-morph between two street routes is not meaningful — a path halfway between
-Valencia and Church Street runs through buildings — so the continuity is in
-the cost, not the geometry.
+change it solves twenty-four Dijkstras, one per value of α in
+*cost = length + α × climbing*, from α = 0 (the true shortest path) to
+α = 200, on real length with no comfort multipliers. The sweep stops at
+200 because beyond it the router walks miles to save a few feet (on the
+default trip, 7.5 miles instead of 4.6 to save 55 ft), which is the
+degenerate end of the trade-off rather than a route anyone wants; the
+slider then runs evenly over the distinct routes found, since most α
+values repeat a neighbour's. A one-parameter trade-off of that form is monotone:
+if α₂ > α₁ then the α₂ route climbs no more and is no shorter than the α₁
+route (add the two optimality inequalities and the cross terms cancel), so
+sliding right never shortens the route and never adds climbing, which is
+what the end labels promise. The first version scaled the balanced
+objective instead, with its steepness penalties and comfort-weighted
+lengths, and that guarantee did not hold: the flattest route could be a
+third of a mile shorter than its neighbour. Identical routes are merged,
+so the slider steps through only the distinct ones, and the map crossfades
+between neighbours while the profile and the numbers tween. That takes
+about 150 ms, after which dragging is free. A genuinely continuous morph
+between two street routes is not meaningful — a path halfway between
+Valencia and Church Street runs through buildings — so the continuity is
+in the cost, not the geometry.
 
 Place search runs on an index packed into the page: intersections are
 derived in the browser from the graph's own street names; parks, schools,
@@ -567,7 +578,7 @@ site/                 the route finder as a static site (built; deployed
   __main__.py         CLI
   vendor/             Leaflet 1.9.4 (BSD-2-Clause), inlined into the map
 notebooks/            exploration only; the analysis runs from the CLI
-tests/                137 tests
+tests/                139 tests
 data/raw/             cached source data (never modified)
 data/processed/       cached intermediate products
 outputs/              deliverables

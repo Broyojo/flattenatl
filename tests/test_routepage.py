@@ -50,7 +50,7 @@ _SCRIPT = """(queries) => {
         id: u.id, distance_m: u.stats.distance_m, gain: u.stats.elev_gain_m,
         arcs: u.arcs.map(a => [g.arcEdge[a], (g.arcFlags[a] & 4) ? 1 : 0]),
         cost_shortest: g.pathCost(u.arcs, App.state.mode, App.weights(0)),
-        cost_half: g.pathCost(u.arcs, App.state.mode, App.weights(App.lambdas[App.stepAt(0.5)])),
+        cost_half: g.pathCost(u.arcs, App.state.mode, App.weights(App.alphas[App.stepAt(0.5)])),
     }));
     const search = {};
     for (const q of queries) search[q] = App.index.search(q).map(r => [r.name, r.kind]);
@@ -63,7 +63,7 @@ _SCRIPT = """(queries) => {
     const half = App.shown.id;
     return {
         from: App.state.from, to: App.state.to, steps: fam.steps, members,
-        lambdaHalf: App.lambdas[App.stepAt(0.5)],
+        alphaHalf: App.alphas[App.stepAt(0.5)],
         search, atZero, atOne, half, hash: location.hash,
         places: App.index.places.length, intersections: App.index.intersections.length,
         hasAddresses: !!App.index.addr,
@@ -91,6 +91,19 @@ def page_results():
             "window.App && App.family && !document.getElementById('result').hidden",
             timeout=240_000)
         out = page.evaluate(_SCRIPT, _SEARCHES)
+        # change the destination without touching the slider: the line on
+        # the map must be the new trip's, not the old one's
+        out["retarget"] = page.evaluate("""() => {
+            const before = App._line.getLatLngs().length;
+            const hit = App.index.search('coit tower')[0];
+            App.setPoint('to', App.pointAt(hit.lon, hit.lat, hit.name), false);
+            App.recompute('auto');
+            const u = App.shown, line = App._line.getLatLngs();
+            const end = line[line.length - 1];
+            return { before, after: line.length, sameAsShown: line.length === u.latlngs.length,
+                     member: App.family.unique.includes(u),
+                     endsAtCoit: Math.abs(end.lat - hit.lat) < 0.004 && Math.abs(end.lng - hit.lon) < 0.004 };
+        }""")
         browser.close()
     return out, errors
 
@@ -100,7 +113,7 @@ def test_the_page_loads_and_routes_its_default_trip(page_results):
     assert not errors, errors[:4]
     assert out["from"] and out["to"]
     assert len(out["members"]) >= 2, "the default trip should offer a real choice"
-    assert len(out["steps"]) == 17          # 16 lambda stops plus the min-climb anchor
+    assert len(out["steps"]) == 24          # one per alpha stop
 
 
 def test_search_finds_intersections_addresses_and_places(page_results):
@@ -133,6 +146,25 @@ def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
     assert half["cost_half"] <= min(u["cost_half"] for u in m.values()) + 1e-6
 
 
+def test_the_family_is_monotone_in_distance_and_climbing(page_results):
+    """Sliding right never shortens the route and never adds climbing: the
+    guarantee a length + alpha * gain trade-off gives, and the behaviour the
+    slider's end labels promise."""
+    out, _ = page_results
+    m = {u["id"]: u for u in out["members"]}
+    seq = [m[i] for i in out["steps"]]
+    for a, b in zip(seq, seq[1:]):
+        assert b["distance_m"] >= a["distance_m"] - 1e-6
+        assert b["gain"] <= a["gain"] + 1e-6
+
+
+def test_a_new_trip_replaces_the_drawn_route_at_once(page_results):
+    """Changing an endpoint redraws without the slider being touched."""
+    out, _ = page_results
+    r = out["retarget"]
+    assert r["member"] and r["sameAsShown"] and r["endsAtCoit"], r
+
+
 def test_the_share_link_carries_the_trip(page_results):
     out, _ = page_results
     h = out["hash"]
@@ -145,7 +177,7 @@ def test_a_slider_position_matches_python(page_results):
     """The browser's route at the slider's midpoint costs no more, under
     Python's own evaluation of the same scaled weights, than Python's route
     between the same two nodes."""
-    from sf_flat_routes.config import ROUTING_PROFILES, with_scale
+    from sf_flat_routes.config import ROUTING_PROFILES, with_alpha
     from sf_flat_routes.pipeline import build_context
     from sf_flat_routes.routing import route
     from sf_flat_routes.utils import configure_gdal_for_proxy
@@ -155,7 +187,7 @@ def test_a_slider_position_matches_python(page_results):
     configure_gdal_for_proxy()
     ctx = build_context(modes=("walk",))
     graph = ctx.graphs["walk"]
-    w = with_scale(ROUTING_PROFILES["balanced"], out["lambdaHalf"])
+    w = with_alpha(ROUTING_PROFILES["shortest"], out["alphaHalf"])
     cost = graph.build_costs(w)
     t = graph.table
     key = {(int(e), d): i for i, (e, d) in enumerate(zip(t["edge_id"], t["direction"]))}
