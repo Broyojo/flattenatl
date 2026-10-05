@@ -31,6 +31,11 @@ _S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 DEM_DIR = RAW_DIR / "dem"
 SEGMENTS_PARQUET = RAW_DIR / "overture_segments_sf.parquet"
 CONNECTORS_PARQUET = RAW_DIR / "overture_connectors_sf.parquet"
+PLACES_PARQUET = RAW_DIR / "overture_places_sf.parquet"
+ADDRESSES_PARQUET = RAW_DIR / "overture_addresses_sf.parquet"
+#: Overture base theme (OpenStreetMap): mapped parks, schools, stations...
+BASE_PARQUETS = {typ: RAW_DIR / f"overture_{typ}_sf.parquet"
+                 for typ in ("land_use", "infrastructure", "land")}
 NEIGHBORHOODS_GEOJSON = RAW_DIR / "sf_neighborhoods.geojson"
 DEM_13_TIF = RAW_DIR / "dem_13_n38w123.tif"
 
@@ -42,6 +47,9 @@ SEGMENT_COLUMNS = [
     "level_rules", "geometry", "bbox", "sources",
 ]
 CONNECTOR_COLUMNS = ["id", "geometry", "bbox"]
+PLACE_COLUMNS = ["id", "names", "categories", "confidence", "geometry", "bbox"]
+ADDRESS_COLUMNS = ["id", "number", "street", "unit", "postcode", "geometry", "bbox"]
+BASE_COLUMNS = ["id", "names", "subtype", "class", "geometry", "bbox"]
 
 
 # --------------------------------------------------------------------------
@@ -134,8 +142,9 @@ def _matching_row_groups(metadata, bbox) -> list[int]:
 
 
 def _read_overture_type(overture_type: str, columns: list[str], dest: Path,
-                        bbox=SF_BBOX, force: bool = False) -> Path:
-    """Row-group-pruned read of one Overture transportation type."""
+                        bbox=SF_BBOX, force: bool = False,
+                        prefix: str = sources.OVERTURE_PREFIX) -> Path:
+    """Row-group-pruned read of one Overture type (any theme)."""
     import fsspec
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -144,8 +153,7 @@ def _read_overture_type(overture_type: str, columns: list[str], dest: Path,
         log.info("cached %s (%s)", dest.name, human_bytes(dest.stat().st_size))
         return dest
 
-    prefix = f"{sources.OVERTURE_PREFIX}/type={overture_type}/"
-    keys = _list_s3_keys(sources.OVERTURE_BUCKET, prefix)
+    keys = _list_s3_keys(sources.OVERTURE_BUCKET, f"{prefix}/type={overture_type}/")
     log.info("overture %s: %d parquet files in release %s",
              overture_type, len(keys), sources.OVERTURE_RELEASE)
 
@@ -201,6 +209,22 @@ def download_street_network(force: bool = False) -> tuple[Path, Path]:
     return seg, con
 
 
+def download_places(force: bool = False) -> tuple[Path, Path]:
+    """Places and addresses for the route page's offline search.
+
+    Neither is needed by the analysis; the route page degrades to
+    intersection-only search when they are missing.
+    """
+    places = _read_overture_type("place", PLACE_COLUMNS, PLACES_PARQUET,
+                                 force=force, prefix=sources.OVERTURE_PLACES_PREFIX)
+    addrs = _read_overture_type("address", ADDRESS_COLUMNS, ADDRESSES_PARQUET,
+                                force=force, prefix=sources.OVERTURE_ADDRESSES_PREFIX)
+    for typ, dest in BASE_PARQUETS.items():
+        _read_overture_type(typ, BASE_COLUMNS, dest, force=force,
+                            prefix=sources.OVERTURE_BASE_PREFIX)
+    return places, addrs
+
+
 # --------------------------------------------------------------------------
 # Elevation
 # --------------------------------------------------------------------------
@@ -235,6 +259,12 @@ def download_all(force: bool = False) -> dict[str, object]:
         out["segments"], out["connectors"] = download_street_network(force=force)
     with step("downloading neighborhood boundaries", log):
         out["neighborhoods"] = download_neighborhoods(force=force)
+    with step("downloading places and addresses (Overture)", log):
+        try:
+            out["places"], out["addresses"] = download_places(force=force)
+        except Exception as exc:  # optional: the route page can do without
+            log.warning("places/addresses unavailable (%s); the route page "
+                        "will offer intersection search only", exc)
     with step("downloading USGS 3DEP elevation", log):
         out["dem"] = download_dem(force=force)
     return out

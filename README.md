@@ -22,18 +22,44 @@ The full write-up is in **[`outputs/findings.md`](outputs/findings.md)**, and
 the checks against known ground truth are in
 **[`outputs/validation_report.md`](outputs/validation_report.md)**.
 
-## The interactive map
+## The route finder
 
 **Live: [claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC](https://claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC)**
 (private to its owner until shared).
 
-[`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) is the
-same page as a single 6.5 MB file that routes in your browser over the real
-graph — click any two points, switch between walking and cycling, choose an
-objective, or drag the cost weights and watch the route respond. Download it
-and open it; GitHub will not render a file this size inline.
+Type where you are and where you are going, then drag the slider from
+**shortest** to **flattest** and watch the route change. Every position is a
+real route, solved in your browser over the full street graph with the same
+cost model the analysis uses; the slider scales how much a foot of climbing
+costs relative to a foot of walking, from nothing to enough that the route
+avoids every avoidable hill. The numbers and the elevation profile follow
+along, and the faint lines are the other members of the family, so you can
+see where the routes agree and where they part.
 
-![The interactive map](outputs/screenshot_interactive.png)
+![The route finder](outputs/screenshot_route_finder.png)
+
+Place search is **offline**: street intersections ("24th & Mission"),
+addresses ("1234 Valencia") and about 10,000 parks, landmarks, stations,
+schools, shops and cafes are built into the page from the street graph and
+Overture's places, addresses and base themes. A geocoding API such as Google
+Maps cannot be used here: the artifact sandbox blocks every outside request,
+and a public page should not carry a billed key anyway. You can also click
+the map, or drag either pin. The address bar carries the trip, so a link
+reproduces exactly what you were looking at.
+
+[`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html) is
+the same page as one 6.8 MB file. Download it and open it; GitHub will not
+render a file this size inline.
+
+### The explorer
+
+[`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) is the
+working view of the analysis: the network coloured by gradient, the
+discovered corridors, passes, barriers and basins as toggleable layers, the
+four objectives with live α/β/γ sliders, a Pareto readout, and the warped
+city below. It is dense by design.
+
+![The explorer](outputs/screenshot_interactive.png)
 
 Here it is showing the flattest walking route from the Bayview to Golden Gate
 Park: 7.67 miles and 353 ft of climbing, against 7.01 miles and 1,076 ft for
@@ -77,11 +103,12 @@ the construction here are different.
 
 | Output | What it is |
 |---|---|
-| [`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) | Interactive map that **routes in your browser over the real graph**: click any two points, choose walking or cycling and one of the four objectives, or drag the α/β/γ sliders and watch the route respond. Per-route metrics and elevation profile included. Self-contained — Leaflet and the whole 160,000-arc graph are embedded, so it works offline apart from the optional basemap tiles. |
+| [`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html) | The route finder: origin, destination, walk or bike, and a slider from the shortest route to the flattest, with offline place search. Self-contained — Leaflet, the whole 160,000-arc graph, the place index and a lidar hillshade are embedded. This is the page to share. |
+| [`outputs/sf_flat_routes_artifact.html`](outputs/sf_flat_routes_artifact.html) | The route finder built for publishing as a Claude artifact: identical, minus the document wrapper the host supplies. |
+| [`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) | The explorer: every analysis layer, the four objectives with live α/β/γ sliders, Pareto readout and the warped city. Routes in the browser over the same graph. |
 | [`outputs/sf_flat_backbone.png`](outputs/sf_flat_backbone.png) / `.pdf` | Publication-quality static map of the low-elevation backbone, over a hillshade computed from the same lidar the analysis uses. |
 | [`outputs/sf_street_grades.png`](outputs/sf_street_grades.png) | Citywide street-gradient map. |
-| [`outputs/screenshot_interactive.png`](outputs/screenshot_interactive.png) | Screenshot of the interactive map, for anywhere the HTML cannot be rendered. |
-| [`outputs/sf_flat_routes_artifact.html`](outputs/sf_flat_routes_artifact.html) | The same map built for publishing as a Claude artifact: no document wrapper and no basemap tiles, since the artifact sandbox blocks image loads. |
+| [`outputs/screenshot_route_finder.png`](outputs/screenshot_route_finder.png), [`screenshot_interactive.png`](outputs/screenshot_interactive.png) | Screenshots of the two pages, for anywhere the HTML cannot be rendered. |
 | [`outputs/screenshot_warped.png`](outputs/screenshot_warped.png) | Screenshot of the city warped by climbing cost. |
 | [`outputs/findings.md`](outputs/findings.md) | Written analysis of the major findings. Every figure is generated from the outputs, not typed in. |
 | [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM, documented street gradients and known flat corridors. |
@@ -292,7 +319,7 @@ are closed, and the result is labelled by its constituent street names.
 
 ### Routing in the browser
 
-The interactive map ships the graph, not a set of answers. Earlier it carried
+Both pages ship the graph, not a set of answers. Earlier it carried
 ~10,000 precomputed routes, which meant it could only speak about the 36
 neighborhood access points; embedding the graph itself turned out to be both
 *smaller* and far more useful.
@@ -316,6 +343,29 @@ and the flag that disables them for the `shortest` objective.
 The street network is painted directly onto a canvas from the packed arrays,
 with viewport culling and a zoom-dependent minimum edge length. 88,000
 individual Leaflet polylines would not have been usable; one canvas pass is.
+
+The route finder's slider is a **family of routes**: when the endpoints
+change it solves sixteen Dijkstras, one per value of a factor λ that scales
+every climbing and grade term of the balanced objective (the same sweep the
+Pareto analysis uses, so λ = 0 is the true shortest path), plus the
+minimum-climb objective as the right-hand anchor. Identical routes are
+merged, so the slider steps through only the distinct ones, and the map
+crossfades between neighbours while the profile and the numbers tween. That
+takes about 150 ms, after which dragging is free. A genuinely continuous
+morph between two street routes is not meaningful — a path halfway between
+Valencia and Church Street runs through buildings — so the continuity is in
+the cost, not the geometry.
+
+Place search runs on an index packed into the page: intersections are
+derived in the browser from the graph's own street names; parks, schools,
+stations, piers, peaks and beaches come from Overture's base theme (mapped
+OpenStreetMap outlines, which are reliable); landmarks, shops and cafes
+come from Overture's places feed, which is not — the same name recurs at
+several spots, some nowhere near the real thing — so a POI record is kept
+only where neighbouring records corroborate it and is dropped when a
+mapped feature already carries its name
+([`sf_flat_routes/places.py`](sf_flat_routes/places.py)). Addresses are
+230,000 (street, number) points in 10 bytes each.
 
 ### Passes and barriers
 
@@ -354,8 +404,9 @@ network.
 
 ## Data sources
 
-All URLs verified 2026-09-16. `python -m sf_flat_routes sources` prints the
-full table with limitations.
+All URLs verified 2026-09-16 (the three search-only Overture themes on
+2026-10-04). `python -m sf_flat_routes sources` prints the full table with
+limitations.
 
 | Dataset | Publisher | Resolution / vintage | Licence | Role |
 |---|---|---|---|---|
@@ -364,6 +415,9 @@ full table with limitations.
 | USGS 3DEP 1/3 arc-second DEM, tile `n38w123` | USGS 3D Elevation Program | ~10 m, EPSG:4269 | Public domain | Independent cross-check only |
 | San Francisco neighborhoods (37-unit planning set) | SF Planning / DataSF, mirrored by Code for America | 37 polygons | Open data | Neighborhood boundaries |
 | Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Bicycle overlay (see limitations) |
+| Overture Maps base theme (land use, infrastructure, land), release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Mapped outlines and points | ODbL 1.0 | Route finder search only: parks, schools, stations, piers, peaks, beaches |
+| Overture Maps places, release `2026-08-19.0` | Overture Maps Foundation (Meta / Microsoft POI data) | Points with names, categories, confidence | CDLA-Permissive 2.0 | Route finder search only: landmarks, shops, cafes (noisy; see `places.py`) |
+| Overture Maps addresses, release `2026-08-19.0` | Overture Maps Foundation (OpenAddresses / City of San Francisco) | Address points | Open (public domain source) | Route finder search only: street addresses |
 
 ### Two substitutions, and why
 
@@ -413,7 +467,7 @@ Or stage by stage — each caches its output, so re-running is cheap:
 
 ```bash
 python -m sf_flat_routes sources        # dataset provenance table
-python -m sf_flat_routes download       # fetch and cache source data (~725 MB)
+python -m sf_flat_routes download       # fetch and cache source data (~750 MB)
 python -m sf_flat_routes build-network  # street graph, elevation, edge metrics
 python -m sf_flat_routes analyze        # pairs, Pareto, corridors, passes
 python -m sf_flat_routes validate       # checks against known ground truth
@@ -487,16 +541,19 @@ sf_flat_routes/
   validate.py         checks against known ground truth
   viz_static.py       publication maps (matplotlib + lidar hillshade)
   webgraph.py         packs the graph into a compressed browser payload
-  viz_interactive.py  assembles the self-contained interactive map
-  web/                the map's own HTML, CSS and JavaScript: the router
-                      (app.js) and the warped-city construction (warp.js)
+  places.py           offline place index for the route finder, and the
+                      hillshade base image
+  viz_interactive.py  assembles the two self-contained web pages
+  web/                their HTML, CSS and JavaScript: the shared router
+                      (engine.js), the route finder (simple.js), the
+                      explorer (app.js) and the warped city (warp.js)
   sensitivity.py      rebuilds the pipeline under perturbed parameters
   report.py           generates outputs/findings.md from the outputs
   pipeline.py         stage orchestration
   __main__.py         CLI
   vendor/             Leaflet 1.9.4 (BSD-2-Clause), inlined into the map
 notebooks/            exploration only; the analysis runs from the CLI
-tests/                93 tests
+tests/                136 tests
 data/raw/             cached source data (never modified)
 data/processed/       cached intermediate products
 outputs/              deliverables
@@ -535,7 +592,11 @@ Beyond the two dataset substitutions above:
   60% plausibility ceiling. For a project about *flat* routes, clipping the
   peak of a 41% wall is a much cheaper error than inventing gradient on flat
   ground.
-- **The interactive map quantises the graph** to keep the file small:
+- **The place search is only as good as its sources.** Intersections and
+  addresses are solid; Overture's places feed puts some well-known names in
+  the wrong place, and the corroboration rules in `places.py` remove the
+  worst of it rather than all of it. Check the pin.
+- **The web pages quantise the graph** to keep the file small:
   lengths and steep distances to 5 cm, climbing to 1 cm, gradients to 0.01%.
   Route totals therefore drift from the Python figures by a few tens of
   centimetres over a long route, and where two routes tie on cost the browser

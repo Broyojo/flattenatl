@@ -1,22 +1,19 @@
-"""Interactive web map with a working routing interface.
+"""The two web maps: the analysis explorer and the simple route page.
 
-The map is a single self-contained HTML file: MapLibre GL JS is loaded from a
-CDN, but every byte of data is embedded, so the file can be moved around and
-opened directly.
+Both are single self-contained HTML files with Leaflet vendored and every
+byte of data embedded, so they can be moved around and opened directly, and
+both route in the browser over the packed graph (``webgraph.py``) with the
+same cost model Python uses.
 
-Because a static file cannot run Dijkstra, the routing UI is served from
-**precomputed routes**: every ordered neighborhood pair, under every
-objective, for both travel modes.  Selecting an origin, a destination and a
-preference looks the route up rather than solving it, which makes the UI
-instant and keeps the analysis and the map in exact agreement.  Route
-geometry is stored as encoded polylines and elevation profiles are
-downsampled, which keeps the whole thing to a manageable size.
-
-Layers
-------
-neighborhoods, street network coloured by gradient, discovered flat
-corridors, steep barriers, critical passes, lowland basins, bicycle
-facilities and car-free / low-stress streets.
+* **Explorer** (``outputs/sf_flat_routes_map.html``): every analysis layer
+  (gradient-coloured network, corridors, passes, barriers, basins, bike
+  facilities), the four objectives with live weight sliders, Pareto readout
+  and the cost-warped city. Dense by design; this is the working view.
+* **Route page** (``outputs/sf_flat_route_finder.html`` and the artifact
+  variant): one card with origin, destination and a shortest-to-flattest
+  slider over a quiet hillshade. Place search is offline (intersections from
+  the graph, Overture places and addresses packed into the page). This is
+  the one to share.
 """
 from __future__ import annotations
 
@@ -31,10 +28,16 @@ from .utils import get_logger, human_bytes, step
 log = get_logger("sf_flat_routes.viz_interactive")
 
 INTERACTIVE_HTML = OUTPUT_DIR / "sf_flat_routes_map.html"
-#: Variant for publishing as a Claude artifact: no document wrapper (the
-#: host supplies it) and no basemap tiles (the artifact sandbox blocks image
-#: loads from other hosts). Everything else is identical.
+#: The simple route page, and its variant for publishing as a Claude
+#: artifact: no document wrapper (the host supplies it) and no basemap
+#: tiles (the artifact sandbox blocks image loads from other hosts; the
+#: hillshade is an embedded data URI for exactly that reason).
+SIMPLE_HTML = OUTPUT_DIR / "sf_flat_route_finder.html"
 ARTIFACT_HTML = OUTPUT_DIR / "sf_flat_routes_artifact.html"
+#: Where the artifact variant is published; baked in so its "Copy link"
+#: button can produce a link that opens the trip (the page cannot learn its
+#: own public address from inside the host's sandbox).
+ARTIFACT_URL = "https://claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 
@@ -184,22 +187,124 @@ def _vendor(name: str) -> str:
     return (VENDOR_DIR / name).read_text(encoding="utf-8")
 
 
-def _render(payload: dict, artifact: bool) -> str:
+def _strip_wrapper(html: str) -> str:
+    """Artifact variant: the host supplies <html>/<head>/<body> and metas."""
     import re
+    head = re.search(r"<head>(.*?)</head>", html, re.S).group(1)
+    body = re.search(r"<body>(.*?)</body>", html, re.S).group(1)
+    head = re.sub(r"<meta[^>]*>\s*", "", head)
+    return head.strip() + "\n" + body.strip() + "\n"
+
+
+def _render(payload: dict, artifact: bool) -> str:
+    """The explorer page."""
     html = _asset("index.html")
     html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
     html = html.replace("/*__APP_CSS__*/", _asset("app.css"))
     html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
-    html = html.replace("/*__APP_JS__*/", _asset("app.js") + "\n" + _asset("warp.js"))
+    html = html.replace("/*__APP_JS__*/", _asset("engine.js") + "\n" + _asset("app.js")
+                        + "\n" + _asset("warp.js"))
     if artifact:
         payload = dict(payload, basemap=False)
     html = html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
+    return _strip_wrapper(html) if artifact else html
+
+
+def _render_simple(payload: dict, artifact: bool) -> str:
+    """The route page."""
+    html = _asset("simple.html")
+    html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
+    html = html.replace("/*__APP_CSS__*/", _asset("simple.css"))
+    html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
+    html = html.replace("/*__APP_JS__*/", _asset("engine.js") + "\n" + _asset("simple.js"))
     if artifact:
-        head = re.search(r"<head>(.*?)</head>", html, re.S).group(1)
-        body = re.search(r"<body>(.*?)</body>", html, re.S).group(1)
-        head = re.sub(r"<meta[^>]*>\s*", "", head)
-        html = head.strip() + "\n" + body.strip() + "\n"
-    return html
+        payload = dict(payload, share_base=ARTIFACT_URL)
+    html = html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
+    return _strip_wrapper(html) if artifact else html
+
+
+#: Where the route page opens before anyone types: a walk whose shortest
+#: path climbs over the northern hills and whose flattest path does not.
+#: Resolved against the place index at build time; the neighborhood access
+#: points are the fallback.
+_DEFAULT_TRIP = (
+    ("Dolores Park", ("Mission Dolores Park", "Dolores Park"), "Mission"),
+    ("Marina Green", ("Marina Green", "Fort Mason"), "Marina"),
+)
+
+
+def _default_trip(places: dict | None, points: dict) -> list[dict]:
+    out = []
+    for label, names, nb in _DEFAULT_TRIP:
+        hit = None
+        if places:
+            for want in names:
+                for i, n in enumerate(places["names"]):
+                    if n == want:
+                        hit = {"label": label, "lon": places["lon"][i], "lat": places["lat"][i]}
+                        break
+                if hit:
+                    break
+        if hit is None and nb in points.get("walk", {}):
+            lon, lat = points["walk"][nb]
+            hit = {"label": nb, "lon": lon, "lat": lat}
+        if hit is None:
+            return []
+        out.append(hit)
+    return out
+
+
+def _labels(ctx) -> list[dict]:
+    """Sparse neighborhood labels for the route page's base map."""
+    nb = ctx.neighborhoods.to_crs("EPSG:4326")
+    out = []
+    for _, r in nb.iterrows():
+        p = r.geometry.representative_point()
+        out.append({"n": r["neighborhood"], "lon": round(p.x, 5), "lat": round(p.y, 5)})
+    return out
+
+
+def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
+    """Pack the place index and hillshade with the graph; write both variants."""
+    from .download import ADDRESSES_PARQUET, PLACES_PARQUET
+    from .places import build_addresses, build_hillshade, build_places
+    from .webgraph import bundle
+
+    strings = {"geom": graph["geom"]}
+    arrays = dict(graph["arrays"])
+    places = None
+    if PLACES_PARQUET.exists():
+        places = build_places()
+        strings["places"] = json.dumps(places, separators=(",", ":"))
+    else:
+        log.warning("no places parquet; the route page will search intersections only")
+    if ADDRESSES_PARQUET.exists():
+        addr = build_addresses()
+        strings["addr_streets"] = json.dumps(addr["streets"], separators=(",", ":"))
+        for k in ("street", "number", "lon", "lat"):
+            arrays["addr_" + k] = addr[k]
+        addr_meta = {"origin": addr["origin"], "step": 1e-5}
+    else:
+        addr_meta = None
+    try:
+        hillshade = build_hillshade()
+    except Exception as exc:  # the page works without it, on streets alone
+        log.warning("hillshade unavailable (%s)", exc)
+        hillshade = None
+
+    with step("bundling the route page payload", log):
+        packed = bundle(dict(graph, arrays=arrays), strings)
+    payload = {
+        "manifest": packed["manifest"], "bundle": packed["b64"],
+        "meta": packed["meta"], "addr": addr_meta, "hillshade": hillshade,
+        "labels": _labels(ctx), "default": _default_trip(places, pts),
+    }
+    SIMPLE_HTML.write_text(_render_simple(payload, artifact=False), encoding="utf-8")
+    ARTIFACT_HTML.write_text(_render_simple(payload, artifact=True), encoding="utf-8")
+    log.info("wrote %s (%s) and %s (%s)", SIMPLE_HTML.name,
+             human_bytes(SIMPLE_HTML.stat().st_size), ARTIFACT_HTML.name,
+             human_bytes(ARTIFACT_HTML.stat().st_size))
+    return SIMPLE_HTML
 
 
 def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
@@ -236,11 +341,11 @@ def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
         "examples": _examples(pts),
     }
 
-    with step("writing the interactive HTML", log):
+    with step("writing the explorer HTML", log):
         INTERACTIVE_HTML.parent.mkdir(parents=True, exist_ok=True)
         INTERACTIVE_HTML.write_text(_render(payload, artifact=False), encoding="utf-8")
-        ARTIFACT_HTML.write_text(_render(payload, artifact=True), encoding="utf-8")
-    log.info("wrote %s (%s) and %s (%s)", INTERACTIVE_HTML.name,
-             human_bytes(INTERACTIVE_HTML.stat().st_size), ARTIFACT_HTML.name,
-             human_bytes(ARTIFACT_HTML.stat().st_size))
+    log.info("wrote %s (%s)", INTERACTIVE_HTML.name,
+             human_bytes(INTERACTIVE_HTML.stat().st_size))
+    with step("writing the route page", log):
+        _write_route_page(ctx, graph, pts)
     return INTERACTIVE_HTML

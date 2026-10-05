@@ -16,6 +16,11 @@ ACCESS_DATE = "2026-09-16"
 OVERTURE_RELEASE = "2026-08-19.0"
 OVERTURE_BUCKET = "https://overturemaps-us-west-2.s3.amazonaws.com"
 OVERTURE_PREFIX = f"release/{OVERTURE_RELEASE}/theme=transportation"
+#: Places and addresses themes of the same release, used only for the route
+#: page's offline place search (fetched 2026-10-04).
+OVERTURE_PLACES_PREFIX = f"release/{OVERTURE_RELEASE}/theme=places"
+OVERTURE_ADDRESSES_PREFIX = f"release/{OVERTURE_RELEASE}/theme=addresses"
+OVERTURE_BASE_PREFIX = f"release/{OVERTURE_RELEASE}/theme=base"
 
 #: USGS 3DEP 1 m lidar project covering San Francisco.
 TNM_BUCKET = "https://prd-tnm.s3.amazonaws.com"
@@ -167,6 +172,53 @@ DATASETS: tuple[Dataset, ...] = (
             "environment's network policy; the official 41-neighborhood "
             "Analysis Neighborhoods GeoJSON could not be downloaded."
         ),
+    ),
+    Dataset(
+        key="overture_places",
+        title=f"Overture Maps places (release {OVERTURE_RELEASE})",
+        publisher="Overture Maps Foundation (Meta and Microsoft POI data)",
+        url=f"{OVERTURE_BUCKET}/{OVERTURE_PLACES_PREFIX}/type=place/",
+        accessed="2026-10-04",
+        resolution="Point features with names, categories and a confidence score",
+        licence="CDLA Permissive 2.0",
+        role="Offline place search in the route page (parks, landmarks, "
+             "transit, schools, shops, cafes).",
+        local="data/raw/overture_places_sf.parquet",
+        limitations="Point-of-interest coverage and naming are uneven; only "
+                    "records with confidence >= 0.6 in routable categories "
+                    "are kept. Not used by the analysis itself.",
+        optional=True,
+    ),
+    Dataset(
+        key="overture_base",
+        title=f"Overture Maps base theme: land use, infrastructure, land (release {OVERTURE_RELEASE})",
+        publisher="Overture Maps Foundation (derived from OpenStreetMap)",
+        url=f"{OVERTURE_BUCKET}/{OVERTURE_BASE_PREFIX}/",
+        accessed="2026-10-04",
+        resolution="Mapped outlines and points with names and OSM-derived classes",
+        licence="ODbL 1.0 (OpenStreetMap contributors)",
+        role="Mapped parks, schools, hospitals, plazas, stations, piers, "
+             "bridges, viewpoints, peaks and beaches for the route page's "
+             "offline search; these outrank the POI feed, which places the "
+             "same names unreliably.",
+        local="data/raw/overture_{land_use,infrastructure,land}_sf.parquet",
+        limitations="Only named features in a fixed class list are used. "
+                    "Not used by the analysis itself.",
+        optional=True,
+    ),
+    Dataset(
+        key="overture_addresses",
+        title=f"Overture Maps addresses (release {OVERTURE_RELEASE})",
+        publisher="Overture Maps Foundation (OpenAddresses / City of San Francisco)",
+        url=f"{OVERTURE_BUCKET}/{OVERTURE_ADDRESSES_PREFIX}/type=address/",
+        accessed="2026-10-04",
+        resolution="Address points with street number and street name",
+        licence="Open (OpenAddresses sources; SF data is public domain)",
+        role="Offline street-address search in the route page.",
+        local="data/raw/overture_addresses_sf.parquet",
+        limitations="One point per (street, number) is kept; unit numbers "
+                    "are dropped. Not used by the analysis itself.",
+        optional=True,
     ),
     Dataset(
         key="bike_network",
