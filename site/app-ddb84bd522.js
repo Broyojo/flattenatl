@@ -752,11 +752,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   const fmtPct = (g) => (g * 100).toFixed(g * 100 < 10 ? 1 : 0) + "<small>%</small>";
 
   /* -------------------------------------------------------- text matching */
+  /* Street-type words collapse to their abbreviations on both the index and
+   * the query, so "Geary Blvd", "Geary Boulevard" and "geary" all match. */
+  const ABBREV = { street: "st", avenue: "ave", boulevard: "blvd", drive: "dr", road: "rd",
+    court: "ct", place: "pl", lane: "ln", terrace: "ter", highway: "hwy", parkway: "pkwy",
+    circle: "cir", alley: "aly", square: "sq", stairway: "stwy", stairs: "stwy", way: "wy",
+    north: "n", south: "s", east: "e", west: "w", saint: "st", mount: "mt" };
   const norm = (s) => s.toLowerCase()
     .replace(/[’']/g, "")
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\bsaint\b/g, "st")
-    .replace(/\s+/g, " ").trim();
+    .replace(/\s+/g, " ").trim()
+    .split(" ").map((w) => ABBREV[w] || w).join(" ");
 
   /* 0 exact, 1 starts with, 2 every token is a word prefix, 3 substring, -1 none */
   function matchScore(nn, q, toks) {

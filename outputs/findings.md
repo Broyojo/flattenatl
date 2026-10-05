@@ -4,22 +4,22 @@
 
 ## The headline
 
-The street network modelled here is 3,289 km long, of which 3,085 km is walkable. It climbs an average of 21.3 m for every kilometre of street. But that average conceals a usable low-elevation network. Across all 1,260 ordered neighborhood pairs, on foot:
+The street network modelled here is 3,289 km long, of which 3,095 km is walkable. It climbs an average of 21.3 m for every kilometre of street. But that average conceals a usable low-elevation network. Across all 1,260 ordered neighborhood pairs, on foot:
 
 | Objective | Mean distance | Mean climb | Mean steepest grade | Distance penalty | Climbing avoided |
 |---|---|---|---|---|---|
-| Shortest (distance only) | 3.96 mi | 484 ft | 27.3% | +0% | 0% |
-| Balanced | 4.64 mi | 309 ft | 12.8% | +19% | 33% |
-| Flattest (minimum climbing) | 4.56 mi | 281 ft | 17.2% | +14% | 39% |
-| Grade-averse | 5.64 mi | 325 ft | 10.8% | +48% | 30% |
+| Shortest (distance only) | 3.96 mi | 483 ft | 27.2% | +0% | 0% |
+| Balanced | 4.64 mi | 308 ft | 12.8% | +19% | 33% |
+| Flattest (minimum climbing) | 4.56 mi | 281 ft | 17.1% | +14% | 39% |
+| Grade-averse | 5.64 mi | 325 ft | 10.7% | +48% | 30% |
 
 **About 14% more walking buys about 39% less climbing.** That is the central result: the minimum-climbing route is on average only 14% longer than the shortest one, yet it avoids 39% of the ascent, and it drops the typical steepest pitch from 27% to 17%.
 
-The grade-averse objective is worth separating out. It ends up climbing slightly *more* in total than the flattest route (325 ft against 281 ft) while costing much more distance, but it holds the steepest pitch to 10.8% where the flattest route still allows 17.2%. Total climbing and peak steepness are genuinely different objectives, and a single definition of "flat" cannot serve both: minimising total ascent will happily send you up one short wall, and avoiding walls will make you climb a little more overall.
+The grade-averse objective is worth separating out. It ends up climbing slightly *more* in total than the flattest route (325 ft against 281 ft) while costing much more distance, but it holds the steepest pitch to 10.7% where the flattest route still allows 17.1%. Total climbing and peak steepness are genuinely different objectives, and a single definition of "flat" cannot serve both: minimising total ascent will happily send you up one short wall, and avoiding walls will make you climb a little more overall.
 
 A note on the baseline. The shortest pedestrian route minimises distance only, as specified, and San Francisco's distance-minimising pedestrian network runs straight up public stairways: the mean steepest pitch on a shortest walking route is 27%, and some hit the model's 60% plausibility ceiling. That is not an artefact -- it is what minimising distance means in this city, and it is a large part of why the flat alternatives matter.
 
-The same effect explains the occasional very steep pitch surviving on a *flat* route in the tables below. A five-metre public stairway costs only a few hundred equivalent metres under the cost model, so when the alternative is a longer detour than that, the model takes the stairs -- which is what a pedestrian does too. The grade-averse objective is the one that refuses them, holding the mean steepest pitch to 10.8%. This was left alone rather than tuned away: it is the cost model behaving as specified, not a defect.
+The same effect explains the occasional very steep pitch surviving on a *flat* route in the tables below. A five-metre public stairway costs only a few hundred equivalent metres under the cost model, so when the alternative is a longer detour than that, the model takes the stairs -- which is what a pedestrian does too. The grade-averse objective is the one that refuses them, holding the mean steepest pitch to 10.7%. This was left alone rather than tuned away: it is the cost model behaving as specified, not a defect.
 
 ## Specific answers
 
@@ -27,19 +27,19 @@ The same effect explains the occasional very steep pitch surviving on a *flat* r
 
 | From | To | Shortest | Flattest | Balanced |
 |---|---|---|---|---|
-| Mission | Outer Sunset | 5.10 mi / 1130 ft / max 60% | 6.22 mi / 333 ft / max 9% | 6.20 mi / 345 ft / max 7% |
+| Mission | Outer Sunset | 5.11 mi / 1130 ft / max 60% | 6.23 mi / 333 ft / max 9% | 6.21 mi / 345 ft / max 7% |
 | Inner Richmond | Downtown/Civic Center | 2.81 mi / 224 ft / max 10% | 3.02 mi / 110 ft / max 7% | 2.90 mi / 117 ft / max 7% |
-| Mission | Marina | 3.78 mi / 341 ft / max 15% | 4.10 mi / 178 ft / max 8% | 4.10 mi / 178 ft / max 8% |
+| Mission | Marina | 3.75 mi / 361 ft / max 42% | 4.00 mi / 179 ft / max 8% | 4.00 mi / 179 ft / max 8% |
 | Bayview | Golden Gate Park | 7.00 mi / 1076 ft / max 60% | 7.67 mi / 353 ft / max 10% | 7.64 mi / 360 ft / max 10% |
 | Noe Valley | Financial District | 3.69 mi / 204 ft / max 19% | 4.07 mi / 46 ft / max 2% | 4.07 mi / 46 ft / max 2% |
-| Outer Richmond | Mission | 5.44 mi / 410 ft / max 21% | 5.70 mi / 163 ft / max 7% | 5.68 mi / 166 ft / max 7% |
+| Outer Richmond | Mission | 5.45 mi / 402 ft / max 21% | 5.71 mi / 157 ft / max 10% | 5.69 mi / 161 ft / max 7% |
 | Excelsior | South of Market | 4.57 mi / 107 ft / max 7% | 5.25 mi / 64 ft / max 5% | 4.57 mi / 107 ft / max 7% |
 | Haight Ashbury | Financial District | 3.17 mi / 90 ft / max 10% | 3.57 mi / 33 ft / max 6% | 3.18 mi / 68 ft / max 3% |
 | Parkside | Downtown/Civic Center | 5.81 mi / 580 ft / max 16% | 6.69 mi / 239 ft / max 33% | 6.38 mi / 268 ft / max 8% |
 | Bernal Heights | Marina | 4.80 mi / 530 ft / max 19% | 5.46 mi / 179 ft / max 8% | 5.46 mi / 179 ft / max 8% |
 | Potrero Hill | Western Addition | 3.18 mi / 242 ft / max 20% | 3.52 mi / 127 ft / max 12% | 3.51 mi / 129 ft / max 11% |
 | West of Twin Peaks | Downtown/Civic Center | 4.61 mi / 241 ft / max 8% | 5.96 mi / 113 ft / max 10% | 4.75 mi / 228 ft / max 8% |
-| Visitacion Valley | Mission | 4.04 mi / 477 ft / max 22% | 4.77 mi / 205 ft / max 13% | 4.72 mi / 214 ft / max 8% |
+| Visitacion Valley | Mission | 4.04 mi / 477 ft / max 22% | 4.76 mi / 205 ft / max 13% | 4.71 mi / 213 ft / max 8% |
 | Chinatown | Inner Sunset | 4.88 mi / 784 ft / max 42% | 5.32 mi / 403 ft / max 12% | 5.26 mi / 408 ft / max 60% |
 
 Each cell is distance / cumulative climb / steepest gradient.
@@ -66,17 +66,17 @@ These were *discovered*, not listed: the analysis aggregated how often each stre
 | Corridor | Length | Mean grade | Climb per km | Pairs served | Neighborhoods | Elevation range |
 |---|---|---|---|---|---|---|
 | Valencia Street - Guerrero Street - Market Street - 16th Street | 6.9 km | 1.3% | 7.9 m | 324 | 36 | 13-39 m |
-| John F. Kennedy Promenade - Oak Street Cyclepath - Steiner Street - Scott Street | 7.6 km | 1.4% | 7.4 m | 367 | 36 | 35-85 m |
+| John F. Kennedy Promenade - Oak Street Cyclepath - Steiner Street - Scott Street | 7.8 km | 1.4% | 7.2 m | 366 | 36 | 35-85 m |
 | Mission Street | 3.9 km | 1.9% | 8.4 m | 217 | 36 | 41-61 m |
-| Kearny Street - McAllister Street - Hyde Street - Market Street | 3.8 km | 0.9% | 3.6 m | 220 | 36 | 10-26 m |
-| 7th Avenue - Laguna Honda Boulevard - Hugo Street - 4th Avenue | 3.0 km | 2.2% | 20.3 m | 215 | 36 | 84-135 m |
-| Lincoln Way - 5th Avenue - 7th Avenue - 11th Avenue | 3.2 km | 1.2% | 11.7 m | 152 | 35 | 51-85 m |
+| Kearny Street - McAllister Street - Market Street - Hyde Street | 3.9 km | 0.9% | 3.5 m | 224 | 36 | 10-26 m |
+| Lincoln Way - 11th Avenue - 18th Avenue | 3.5 km | 1.2% | 10.3 m | 141 | 34 | 51-81 m |
+| 7th Avenue - Laguna Honda Boulevard - Hugo Street - 4th Avenue | 3.0 km | 2.2% | 20.3 m | 214 | 36 | 84-135 m |
 | McAllister Street - Webster Street - Golden Gate Avenue - Laguna Street | 2.0 km | 1.2% | 8.5 m | 183 | 36 | 21-41 m |
-| Irving Street - 24th Avenue | 1.9 km | 1.5% | 6.7 m | 123 | 36 | 49-68 m |
-| Polk Street - Geary Street | 1.3 km | 2.6% | 17.7 m | 133 | 35 | 36-63 m |
+| Polk Street - Geary Street | 1.3 km | 2.6% | 17.7 m | 132 | 35 | 36-63 m |
 | Harrison Street - 25th Street - Florida Street - 23rd Street | 1.9 km | 1.1% | 10.2 m | 99 | 36 | 5-16 m |
 | Bayshore Boulevard | 1.6 km | 0.6% | 3.4 m | 82 | 36 | 6-24 m |
 | Church Street - 14th Street - Belcher Street | 0.8 km | 1.8% | 3.0 m | 296 | 33 | 29-39 m |
+| 24th Street - Sanchez Street - Castro Street - 25th Street | 1.5 km | 2.0% | 14.4 m | 71 | 35 | 53-67 m |
 
 For scale: a street that climbs under about 8 m per kilometre is flat in a way you notice in San Francisco, and the steep streets in the validation report run at 20-40 m per kilometre.
 
@@ -84,7 +84,7 @@ For scale: a street that climbs under about 8 m per kilometre is flat in a way y
 
 **Valencia Street - Guerrero Street - Market Street - 16th Street** (6.9 km, 1.3% mean gradient) is the city's single most important flat corridor, serving 324 neighborhood pairs and avoiding 21.0 km of cumulative climbing in aggregate. It is the Mission valley floor: Valencia and Guerrero running south from Market, with 16th Street as the cross-link. It exists because the Mission is a genuine alluvial flat wedged between Potrero Hill and the Twin Peaks massif, and it is the only continuous low ground running north-south through the middle of the city.
 
-**John F. Kennedy Promenade - Oak Street Cyclepath - Steiner Street - Scott Street** (7.6 km, 1.4% mean gradient, 367 pairs) is the east-west counterpart, and it is the one worth dwelling on: this is **the Wiggle, the Panhandle and Golden Gate Park read as a single structure**. The model had no idea the Wiggle existed. It found that the Duboce/Steiner/Scott dog-leg, the Fell and Oak corridor beside the Panhandle, and the car-free JFK Promenade through the park are all the same piece of infrastructure: the only low-gradient way from the eastern flats to the ocean.
+**John F. Kennedy Promenade - Oak Street Cyclepath - Steiner Street - Scott Street** (7.8 km, 1.4% mean gradient, 366 pairs) is the east-west counterpart, and it is the one worth dwelling on: this is **the Wiggle, the Panhandle and Golden Gate Park read as a single structure**. The model had no idea the Wiggle existed. It found that the Duboce/Steiner/Scott dog-leg, the Fell and Oak corridor beside the Panhandle, and the car-free JFK Promenade through the park are all the same piece of infrastructure: the only low-gradient way from the eastern flats to the ocean.
 
 ### San Francisco's unnamed Wiggles
 
@@ -93,13 +93,13 @@ The Wiggle is famous because cyclists named it. These corridors do the same job 
 | Corridor | Length | Mean grade | Climb per km | Connects | Why it matters |
 |---|---|---|---|---|---|
 | Mission Street | 3.9 km | 1.9% | 8.4 m | 36 neighborhoods | the continuous valley floor from downtown to the southern border |
+| Lincoln Way - 11th Avenue - 18th Avenue | 3.5 km | 1.2% | 10.3 m | 34 neighborhoods | the southern edge of Golden Gate Park, the gentlest gradient between the park and the ocean |
 | 7th Avenue - Laguna Honda Boulevard - Hugo Street - 4th Avenue | 3.0 km | 2.2% | 20.3 m | 36 neighborhoods | the lowest crossing from the Haight and Inner Sunset into the western half of the city, threading between Mount Sutro and Twin Peaks |
-| Lincoln Way - 5th Avenue - 7th Avenue - 11th Avenue | 3.2 km | 1.2% | 11.7 m | 35 neighborhoods | the lowest crossing from the Haight and Inner Sunset into the western half of the city, threading between Mount Sutro and Twin Peaks |
 | McAllister Street - Webster Street - Golden Gate Avenue - Laguna Street | 2.0 km | 1.2% | 8.5 m | 36 neighborhoods | a level east-west route across the Western Addition, avoiding the Alamo Square rise |
-| Irving Street - 24th Avenue | 1.9 km | 1.5% | 6.7 m | 36 neighborhoods | the Sunset's own east-west spine on the old dune flats |
 | Polk Street - Geary Street | 1.3 km | 2.6% | 17.7 m | 35 neighborhoods | the low saddle route between the northern waterfront and the Civic Center, west of Nob Hill |
 | Harrison Street - 25th Street - Florida Street - 23rd Street | 1.9 km | 1.1% | 10.2 m | 36 neighborhoods | the Mission-to-Potrero-flats connector that stays off the Potrero Hill grade |
 | Bayshore Boulevard | 1.6 km | 0.6% | 3.4 m | 36 neighborhoods | the flattest link from the southern neighborhoods into the city, following the old bay shoreline |
+| Church Street - 14th Street - Belcher Street | 0.8 km | 1.8% | 3.0 m | 33 neighborhoods | the short, heavily used approach that links Market Street to the Mission flats without touching the Castro grade |
 
 ## Passes, saddles and barriers
 
@@ -132,7 +132,7 @@ A steep street that carries heavy shortest-path traffic but almost none once cli
 
 | Street | Neighborhood | Gradient | Pairs via shortest route | Still via the flat route | Verdict |
 |---|---|---|---|---|---|
-| (unnamed) | Presidio | 29.7% | 42 | 0 | avoidable |
+| (unnamed) | Presidio | 29.7% | 40 | 0 | avoidable |
 | Eureka Street | Castro/Upper Market | 14.8% | 102 | 1 | avoidable |
 | Fulton Trail | Golden Gate Park | 11.9% | 52 | 0 | avoidable |
 | Gambier Street | Excelsior | 24.1% | 66 | 21 | partly avoidable |
@@ -147,24 +147,23 @@ A steep street that carries heavy shortest-path traffic but almost none once cli
 
 For every one of the 1,260 ordered pairs, a single weight is swept from zero (pure distance) up to the minimum-climbing objective, tracing the frontier between distance, cumulative climbing and peak gradient. The useful question is where the knee is: how much detour buys how much of the climbing.
 
-- **35% of pairs can halve their climbing** by some route, and the median detour that costs is **12%**. 16% of all pairs can halve it within a 10% detour, 24% within 20%.
-- Taken to the flattest possible route, the median pair sheds **41%** of its climbing for a median **16%** more distance.
+- **34% of pairs can halve their climbing** by some route, and the median detour that costs is **12%**. 16% of all pairs can halve it within a 10% detour, 23% within 20%.
+- Taken to the flattest possible route, the median pair sheds **40%** of its climbing for a median **16%** more distance.
 
 **Mission to Outer Sunset**
 
 | Distance | Climb | Steepest grade |
 |---|---|---|
-| 5.10 mi | 1130 ft | 60% |
-| 5.50 mi | 640 ft | 12% |
-| 6.13 mi | 355 ft | 9% |
-| 6.14 mi | 355 ft | 7% |
+| 5.11 mi | 1130 ft | 60% |
+| 5.51 mi | 640 ft | 12% |
+| 6.14 mi | 355 ft | 9% |
+| 6.15 mi | 355 ft | 7% |
 | 6.19 mi | 352 ft | 7% |
-| 6.20 mi | 345 ft | 7% |
-| 6.20 mi | 345 ft | 7% |
-| 6.21 mi | 341 ft | 7% |
-| 6.21 mi | 340 ft | 7% |
-| 6.22 mi | 333 ft | 9% |
-| 6.31 mi | 338 ft | 7% |
+| 6.21 mi | 345 ft | 7% |
+| 6.21 mi | 345 ft | 7% |
+| 6.22 mi | 341 ft | 7% |
+| 6.23 mi | 333 ft | 9% |
+| 6.32 mi | 338 ft | 7% |
 
 **Inner Richmond to Downtown/Civic Center**
 
@@ -185,13 +184,11 @@ For every one of the 1,260 ordered pairs, a single weight is swept from zero (pu
 
 | Distance | Climb | Steepest grade |
 |---|---|---|
-| 3.78 mi | 341 ft | 15% |
-| 3.79 mi | 248 ft | 9% |
-| 4.10 mi | 178 ft | 8% |
-| 4.10 mi | 178 ft | 8% |
-| 4.37 mi | 184 ft | 6% |
-| 4.37 mi | 184 ft | 6% |
-| 4.37 mi | 184 ft | 6% |
+| 3.75 mi | 361 ft | 42% |
+| 3.77 mi | 247 ft | 9% |
+| 4.00 mi | 179 ft | 8% |
+| 4.27 mi | 185 ft | 6% |
+| 4.28 mi | 184 ft | 6% |
 
 **Bayview to Golden Gate Park**
 
@@ -217,7 +214,7 @@ The frontiers are strongly concave: the first fraction of extra distance removes
 
 The two networks are modelled separately, and they are not interchangeable. San Francisco has 35 km of public stairways, and they are a genuine part of the pedestrian network and completely useless on a bicycle; the bicycle graph excludes them outright. Bicycle costs also carry stress weights (a protected cycleway counts as 0.85 of its length, 19th Avenue and Van Ness as 1.9) and respect one-way restrictions, which pedestrians do not.
 
-The result is that the flattest bicycle route averages 4.62 mi and 281 ft of climbing against 4.56 mi and 281 ft on foot. The difference is modest in aggregate but decisive in specific places: any route whose flat pedestrian option runs up a stairway has no bicycle equivalent at all, which is why the Presidio has no bicycle-legal connection from some of its paths.
+The result is that the flattest bicycle route averages 4.63 mi and 279 ft of climbing against 4.56 mi and 281 ft on foot. The difference is modest in aggregate but decisive in specific places: any route whose flat pedestrian option runs up a stairway has no bicycle equivalent at all, which is why the Presidio has no bicycle-legal connection from some of its paths.
 
 ## How much of this depends on the modelling choices?
 
