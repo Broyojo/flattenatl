@@ -502,14 +502,16 @@ lidar and Overture data that CI does not have. The workflow in
 [`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes that
 directory to GitHub Pages on every push that touches it. One-time setup in
 the repository: Settings → Pages → Source: **GitHub Actions**, then under
-Custom domain enter `flattensf.com` and tick "Enforce HTTPS" once the
-certificate is issued. At the registrar, point the apex at GitHub Pages
+Custom domain enter `www.flattensf.com` and tick "Enforce HTTPS" once the
+certificate is issued. At the registrar, add a CNAME from `www` to
+`almostimplemented.github.io`, and point the apex at GitHub Pages too
 (A records 185.199.108.153, 185.199.109.153, 185.199.110.153,
-185.199.111.153, and the matching AAAA records if you want IPv6) and add a
-CNAME from `www` to `almostimplemented.github.io`. Any other static host
-works the same way: upload `site/` and nothing else. The domain and the
-page URL used for the social-preview tags are `SITE_DOMAIN` and
-`SITE_URL` in [`config.py`](sf_flat_routes/config.py).
+185.199.111.153) so that `flattensf.com` redirects to `www`. Any other
+static host works the same way: upload `site/` and nothing else. The host
+and the page URL used for the canonical link and the social-preview tags
+are `SITE_DOMAIN` and `SITE_URL` in [`config.py`](sf_flat_routes/config.py);
+the preview card itself is `site/preview.jpg`, a 1200×630 JPEG regenerated
+by the screenshot step after every build.
 
 Add `--force` to recompute a stage instead of using its cache. Ad-hoc
 routing:

@@ -215,13 +215,24 @@ def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) ->
             '<link rel="icon" href="favicon.svg" type="image/svg+xml">',
             '<meta property="og:type" content="website">',
             f'<meta property="og:title" content="{PRODUCT_NAME}">',
-            '<meta property="og:site_name" content="flattensf">',
+            '<meta property="og:site_name" content="Flatten SF">',
             '<meta property="og:description" content="The flattest walking or '
             'cycling route between any two places in San Francisco, and every '
             'route between it and the shortest one.">',
             f'<meta property="og:url" content="{SITE_URL}">',
-            f'<meta property="og:image" content="{SITE_URL}preview.png">',
+            f'<meta property="og:image" content="{SITE_URL}preview.jpg">',
+            f'<meta property="og:image:secure_url" content="{SITE_URL}preview.jpg">',
+            '<meta property="og:image:type" content="image/jpeg">',
+            '<meta property="og:image:width" content="1200">',
+            '<meta property="og:image:height" content="630">',
+            '<meta property="og:image:alt" content="A map of San Francisco with a fan of '
+            'walking routes between Trick Dog and the dragon in Golden Gate Park">',
             '<meta name="twitter:card" content="summary_large_image">',
+            f'<meta name="twitter:title" content="{PRODUCT_NAME}">',
+            '<meta name="twitter:description" content="The flattest walking or cycling '
+            'route between any two places in San Francisco, and every route between '
+            'it and the shortest one.">',
+            f'<meta name="twitter:image" content="{SITE_URL}preview.jpg">',
             f'<link rel="preload" href="{payload["bundle_url"]}" as="fetch" crossorigin>',
         ])
         html = html.replace("<!--__HEAD_EXTRA__-->", extra)
