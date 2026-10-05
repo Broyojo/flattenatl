@@ -253,7 +253,7 @@ _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 #: the index does not carry.
 _DEFAULT_TRIP = (
     ("Trick Dog", ("Trick Dog",), "Mission"),
-    ("Naga (the dragon), Golden Gate Park", (), (-122.4779, 37.7716)),
+    ("Naga, Golden Gate Park", (), (-122.4779, 37.7716)),
 )
 
 
