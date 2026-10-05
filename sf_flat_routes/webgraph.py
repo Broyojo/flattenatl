@@ -318,6 +318,7 @@ def bundle(graph: dict, strings: dict[str, str]) -> dict:
         "manifest": {"arrays": manifest_arrays, "strings": manifest_strings,
                      "bytes": len(flat)},
         "b64": base64.b64encode(packed).decode("ascii"),
+        "gz": packed,
         "meta": graph["meta"],
     }
 

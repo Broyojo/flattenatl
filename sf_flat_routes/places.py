@@ -1,8 +1,8 @@
 """Offline place index for the route page: addresses, places, and the base.
 
-A shared page cannot call a geocoding API -- the artifact sandbox blocks all
-network access except a short script allowlist, and a public page should
-not carry a billed API key anyway -- so the index is built here and embedded.
+A static page cannot call a geocoding API without carrying a billed key in
+public, and should not need one for a single city anyway, so the index is
+built here and shipped with the page.
 Three sources, all already in hand or fetched the same way as the streets:
 
 * **Street intersections** are derived in the browser from the graph itself
@@ -370,5 +370,5 @@ def build_hillshade(width_px: int = 1600) -> dict:
         west, north = transform.c, transform.f
         east, south = west + transform.a * w2, north + transform.e * h2
         log.info("  hillshade %dx%d, %.0f KB", w2, h2, len(buf.getvalue()) / 1024)
-    return {"bounds": [[south, west], [north, east]],
+    return {"bounds": [[south, west], [north, east]], "png": buf.getvalue(),
             "data_uri": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}

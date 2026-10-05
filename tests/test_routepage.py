@@ -18,7 +18,7 @@ import os
 import pytest
 
 from sf_flat_routes.config import PROCESSED_DIR
-from sf_flat_routes.viz_interactive import SIMPLE_HTML
+from sf_flat_routes.viz_interactive import SIMPLE_HTML, SITE_INDEX
 
 playwright = pytest.importorskip("playwright.sync_api",
                                  reason="playwright is not installed")
@@ -136,7 +136,7 @@ def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
 def test_the_share_link_carries_the_trip(page_results):
     out, _ = page_results
     h = out["hash"]
-    # one bare token: the artifact host passes nothing else through
+    # one bare token that survives any host or chat client
     assert h.startswith("#t~") and "~0.500~" in h
     assert all(c.isalnum() or c in "._~-" for c in h[1:]), h
 
@@ -168,3 +168,61 @@ def test_a_slider_position_matches_python(page_results):
     # quantisation in the packed graph is ~5 cm per arc
     assert js_cost <= py_cost + 0.05 * len(arcs) + 1.0
     assert abs(js_cost - half["cost_half"]) < 0.02 * js_cost + 5.0
+
+
+# ------------------------------------------------------------- the site
+@pytest.fixture(scope="module")
+def served_site():
+    """The static site over HTTP, as GitHub Pages serves it."""
+    import functools
+    import http.server
+    import threading
+
+    if not SITE_INDEX.exists():
+        pytest.skip("site not built")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
+                                directory=str(SITE_INDEX.parent))
+    handler.log_message = lambda *a, **k: None
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}/"
+    srv.shutdown()
+
+
+def test_the_site_loads_its_graph_over_http(served_site):
+    from playwright.sync_api import sync_playwright
+    errors: list = []
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(executable_path=_chromium(),
+                                         args=["--no-sandbox", "--disable-gpu"])
+        except Exception as exc:                            # pragma: no cover
+            pytest.skip(f"no usable Chromium: {exc}")
+        page = browser.new_page(viewport={"width": 1280, "height": 800})
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("console", lambda m: errors.append(m.text)
+                if m.type == "error" and "fonts.g" not in m.text
+                and "ERR_" not in m.text else None)
+        failed: list = []
+        page.on("requestfailed", lambda r: failed.append(r.url)
+                if served_site in r.url else None)
+        page.goto(served_site, wait_until="load", timeout=240_000)
+        page.wait_for_function(
+            "window.App && App.family && !document.getElementById('result').hidden",
+            timeout=240_000)
+        out = page.evaluate("""() => ({
+            inline: !!window.DATA.bundle, url: window.DATA.bundle_url,
+            hillshade: window.DATA.hillshade && window.DATA.hillshade.url,
+            shade: !!document.querySelector('img.hillshade') && document.querySelector('img.hillshade').naturalWidth,
+            routes: App.family.unique.length, status: document.getElementById('status').textContent,
+        })""")
+        browser.close()
+    assert not errors, errors[:4]
+    assert not failed, failed
+    assert not out["inline"] and out["url"].startswith("data/graph-")
+    assert out["hillshade"].startswith("data/hillshade-") and out["shade"] > 1000
+    assert out["routes"] >= 2
+    for name in ("app.js", "app.css", "leaflet.js", "leaflet.css", "favicon.svg",
+                 ".nojekyll", out["url"], out["hillshade"]):
+        assert (SITE_INDEX.parent / name).exists(), name

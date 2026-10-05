@@ -24,8 +24,7 @@ the checks against known ground truth are in
 
 ## The route finder
 
-**Live: [claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC](https://claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC)**
-(private to its owner until shared).
+**Live: [almostimplemented.github.io/minihill](https://almostimplemented.github.io/minihill/)**
 
 Type where you are and where you are going, then drag the slider from
 **shortest** to **flattest** and watch the route change. Every position is a
@@ -41,15 +40,17 @@ see where the routes agree and where they part.
 Place search is **offline**: street intersections ("24th & Mission"),
 addresses ("1234 Valencia") and about 10,000 parks, landmarks, stations,
 schools, shops and cafes are built into the page from the street graph and
-Overture's places, addresses and base themes. A geocoding API such as Google
-Maps cannot be used here: the artifact sandbox blocks every outside request,
-and a public page should not carry a billed key anyway. You can also click
-the map, or drag either pin. The address bar carries the trip, so a link
-reproduces exactly what you were looking at.
+Overture's places, addresses and base themes. No geocoding API, so no key
+to leak and nothing to pay for. You can also click the map, or drag either
+pin. "Copy link" gives a URL that reopens the exact trip.
 
-[`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html) is
-the same page as one 6.8 MB file. Download it and open it; GitHub will not
-render a file this size inline.
+The site is static: [`site/`](site/) holds the page, its CSS and JS, the
+whole street graph as one 4.8 MB gzipped file and the hillshade as a PNG,
+and GitHub Pages serves it as is. Loading it cold takes a couple of seconds
+on a decent connection; after that every route is solved locally. The same
+page is also written as one self-contained 6.8 MB file,
+[`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html),
+which opens straight from disk.
 
 ### The explorer
 
@@ -104,7 +105,7 @@ the construction here are different.
 | Output | What it is |
 |---|---|
 | [`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html) | The route finder: origin, destination, walk or bike, and a slider from the shortest route to the flattest, with offline place search. Self-contained — Leaflet, the whole 160,000-arc graph, the place index and a lidar hillshade are embedded. This is the page to share. |
-| [`outputs/sf_flat_routes_artifact.html`](outputs/sf_flat_routes_artifact.html) | The route finder built for publishing as a Claude artifact: identical, minus the document wrapper the host supplies. |
+| [`site/`](site/) | The route finder as a static site (the same page with the graph and hillshade as separate cacheable files), deployed to GitHub Pages by `.github/workflows/pages.yml`. |
 | [`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) | The explorer: every analysis layer, the four objectives with live α/β/γ sliders, Pareto readout and the warped city. Routes in the browser over the same graph. |
 | [`outputs/sf_flat_backbone.png`](outputs/sf_flat_backbone.png) / `.pdf` | Publication-quality static map of the low-elevation backbone, over a hillshade computed from the same lidar the analysis uses. |
 | [`outputs/sf_street_grades.png`](outputs/sf_street_grades.png) | Citywide street-gradient map. |
@@ -471,9 +472,20 @@ python -m sf_flat_routes download       # fetch and cache source data (~750 MB)
 python -m sf_flat_routes build-network  # street graph, elevation, edge metrics
 python -m sf_flat_routes analyze        # pairs, Pareto, corridors, passes
 python -m sf_flat_routes validate       # checks against known ground truth
-python -m sf_flat_routes map            # interactive + static maps
+python -m sf_flat_routes map            # interactive + static maps, and site/
 python -m sf_flat_routes report         # written analysis
 ```
+
+### Deploying the route finder
+
+`site/` is committed already built, because building it needs the cached
+lidar and Overture data that CI does not have. The workflow in
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes that
+directory to GitHub Pages on every push that touches it. One-time setup in
+the repository: Settings → Pages → Source: **GitHub Actions**. Any other
+static host works the same way: upload `site/` and nothing else. The page
+URL used for the social-preview tags is `SITE_URL` in
+[`config.py`](sf_flat_routes/config.py); change it if the site moves.
 
 Add `--force` to recompute a stage instead of using its cache. Ad-hoc
 routing:
@@ -547,13 +559,15 @@ sf_flat_routes/
   web/                their HTML, CSS and JavaScript: the shared router
                       (engine.js), the route finder (simple.js), the
                       explorer (app.js) and the warped city (warp.js)
+site/                 the route finder as a static site (built; deployed
+                      to GitHub Pages by .github/workflows/pages.yml)
   sensitivity.py      rebuilds the pipeline under perturbed parameters
   report.py           generates outputs/findings.md from the outputs
   pipeline.py         stage orchestration
   __main__.py         CLI
   vendor/             Leaflet 1.9.4 (BSD-2-Clause), inlined into the map
 notebooks/            exploration only; the analysis runs from the CLI
-tests/                136 tests
+tests/                137 tests
 data/raw/             cached source data (never modified)
 data/processed/       cached intermediate products
 outputs/              deliverables

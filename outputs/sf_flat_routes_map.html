@@ -860,8 +860,10 @@ function base64ToBytes(str) {
 /* The whole graph ships as one gzipped buffer. Inflating it in the browser
  * costs a few hundred milliseconds and saves about two thirds of the file
  * size, which matters a great deal more. */
-async function inflate(b64str) {
-  const bytes = base64ToBytes(b64str);
+async function inflateBytes(bytes) {
+  // a host that serves .gz with Content-Encoding: gzip hands us the plain
+  // bytes already; the gzip magic number tells the two cases apart
+  if (!(bytes.length > 2 && bytes[0] === 0x1f && bytes[1] === 0x8b)) return bytes;
   if (typeof DecompressionStream === "undefined") {
     throw new Error("this browser has no DecompressionStream; please use a "
       + "current version of Chrome, Firefox, Edge or Safari");
@@ -869,6 +871,32 @@ async function inflate(b64str) {
   const stream = new Blob([bytes]).stream()
     .pipeThrough(new DecompressionStream("gzip"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function inflate(b64str) {
+  return inflateBytes(base64ToBytes(b64str));
+}
+
+/* Fetch the packed graph as a separate file (the hosted site), reporting
+ * progress, or inflate the inline copy (the single-file page). */
+async function loadBundle(data, onProgress) {
+  if (data.bundle) return inflate(data.bundle);
+  const res = await fetch(data.bundle_url);
+  if (!res.ok) throw new Error("could not load " + data.bundle_url + " (" + res.status + ")");
+  const total = +res.headers.get("Content-Length") || data.bundle_bytes || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value); got += value.length;
+    if (onProgress) onProgress(got, total);
+  }
+  const all = new Uint8Array(got);
+  let off = 0;
+  for (const c of chunks) { all.set(c, off); off += c.length; }
+  return inflateBytes(all);
 }
 
 /* Views onto the inflated buffer -- no copying, no JSON number parsing. */
@@ -1335,7 +1363,7 @@ class Grid {
 
 
 window.Graph = Graph; window.Geometry = Geometry; window.Grid = Grid;
-window.Bundle = Bundle; window.inflate = inflate;
+window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle;
 
 /* San Francisco flat routes -- the explorer page (everything on screen).
  * Depends on engine.js. */

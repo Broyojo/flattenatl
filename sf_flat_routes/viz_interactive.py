@@ -9,11 +9,13 @@ same cost model Python uses.
   (gradient-coloured network, corridors, passes, barriers, basins, bike
   facilities), the four objectives with live weight sliders, Pareto readout
   and the cost-warped city. Dense by design; this is the working view.
-* **Route page** (``outputs/sf_flat_route_finder.html`` and the artifact
-  variant): one card with origin, destination and a shortest-to-flattest
-  slider over a quiet hillshade. Place search is offline (intersections from
-  the graph, Overture places and addresses packed into the page). This is
-  the one to share.
+* **Route page**: one card with origin, destination and a shortest-to-
+  flattest slider over a quiet hillshade. Place search is offline
+  (intersections from the graph, Overture places and addresses packed into
+  the page). Written twice: as ``outputs/sf_flat_route_finder.html``, one
+  file that opens from disk, and as the static site in ``site/`` (HTML, CSS,
+  JS, the gzipped graph and the hillshade as separate cacheable files),
+  which GitHub Pages serves as the demo.
 """
 from __future__ import annotations
 
@@ -22,22 +24,15 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import OUTPUT_DIR
+from .config import OUTPUT_DIR, REPO_URL, SITE_DIR, SITE_URL
 from .utils import get_logger, human_bytes, step
 
 log = get_logger("sf_flat_routes.viz_interactive")
 
 INTERACTIVE_HTML = OUTPUT_DIR / "sf_flat_routes_map.html"
-#: The simple route page, and its variant for publishing as a Claude
-#: artifact: no document wrapper (the host supplies it) and no basemap
-#: tiles (the artifact sandbox blocks image loads from other hosts; the
-#: hillshade is an embedded data URI for exactly that reason).
+#: The route finder as one self-contained file, and as a static site.
 SIMPLE_HTML = OUTPUT_DIR / "sf_flat_route_finder.html"
-ARTIFACT_HTML = OUTPUT_DIR / "sf_flat_routes_artifact.html"
-#: Where the artifact variant is published; baked in so its "Copy link"
-#: button can produce a link that opens the trip (the page cannot learn its
-#: own public address from inside the host's sandbox).
-ARTIFACT_URL = "https://claude.ai/artifact/DbDYAJPypSf7srG1yJ3bNC"
+SITE_INDEX = SITE_DIR / "index.html"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 
@@ -187,16 +182,7 @@ def _vendor(name: str) -> str:
     return (VENDOR_DIR / name).read_text(encoding="utf-8")
 
 
-def _strip_wrapper(html: str) -> str:
-    """Artifact variant: the host supplies <html>/<head>/<body> and metas."""
-    import re
-    head = re.search(r"<head>(.*?)</head>", html, re.S).group(1)
-    body = re.search(r"<body>(.*?)</body>", html, re.S).group(1)
-    head = re.sub(r"<meta[^>]*>\s*", "", head)
-    return head.strip() + "\n" + body.strip() + "\n"
-
-
-def _render(payload: dict, artifact: bool) -> str:
+def _render(payload: dict) -> str:
     """The explorer page."""
     html = _asset("index.html")
     html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
@@ -204,23 +190,49 @@ def _render(payload: dict, artifact: bool) -> str:
     html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
     html = html.replace("/*__APP_JS__*/", _asset("engine.js") + "\n" + _asset("app.js")
                         + "\n" + _asset("warp.js"))
-    if artifact:
-        payload = dict(payload, basemap=False)
-    html = html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
-    return _strip_wrapper(html) if artifact else html
+    return html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
 
 
-def _render_simple(payload: dict, artifact: bool) -> str:
-    """The route page."""
-    html = _asset("simple.html")
-    html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
-    html = html.replace("/*__APP_CSS__*/", _asset("simple.css"))
-    html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
-    html = html.replace("/*__APP_JS__*/", _asset("engine.js") + "\n" + _asset("simple.js"))
-    if artifact:
-        payload = dict(payload, share_base=ARTIFACT_URL)
-    html = html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
-    return _strip_wrapper(html) if artifact else html
+def _route_page_html(payload: dict, linked: bool) -> str:
+    """The route page: assets inlined (one file) or linked (the site)."""
+    html = _asset("simple.html").replace("/*__REPO_URL__*/", REPO_URL)
+    if linked:
+        html = html.replace('<style>/*__LEAFLET_CSS__*/</style>',
+                            '<link rel="stylesheet" href="leaflet.css">')
+        html = html.replace('<style>/*__APP_CSS__*/</style>',
+                            '<link rel="stylesheet" href="app.css">')
+        html = html.replace('<script>/*__LEAFLET_JS__*/</script>',
+                            '<script src="leaflet.js"></script>')
+        html = html.replace('<script>/*__APP_JS__*/</script>',
+                            '<script src="app.js"></script>')
+        extra = "\n".join([
+            f'<link rel="canonical" href="{SITE_URL}">',
+            '<link rel="icon" href="favicon.svg" type="image/svg+xml">',
+            '<meta property="og:type" content="website">',
+            '<meta property="og:title" content="San Francisco Flat Routes">',
+            '<meta property="og:description" content="Find the flattest walking or '
+            'cycling route between any two places in San Francisco, and slide '
+            'between it and the shortest one.">',
+            f'<meta property="og:url" content="{SITE_URL}">',
+            f'<meta property="og:image" content="{SITE_URL}preview.png">',
+            '<meta name="twitter:card" content="summary_large_image">',
+            f'<link rel="preload" href="{payload["bundle_url"]}" as="fetch" crossorigin>',
+        ])
+        html = html.replace("<!--__HEAD_EXTRA__-->", extra)
+    else:
+        html = html.replace("<!--__HEAD_EXTRA__-->\n", "")
+        html = html.replace("/*__LEAFLET_CSS__*/", _vendor("leaflet-1.9.4.css"))
+        html = html.replace("/*__APP_CSS__*/", _asset("simple.css"))
+        html = html.replace("/*__LEAFLET_JS__*/", _vendor("leaflet-1.9.4.min.js"))
+        html = html.replace("/*__APP_JS__*/", _asset("engine.js") + "\n" + _asset("simple.js"))
+    return html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
+
+
+_FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<rect width="32" height="32" rx="7" fill="#0f8f6f"/>
+<path d="M5 22 C10 22 11 12 16 12 S22 20 27 10" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>
+</svg>
+"""
 
 
 #: Where the route page opens before anyone types: a walk whose shortest
@@ -265,7 +277,10 @@ def _labels(ctx) -> list[dict]:
 
 
 def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
-    """Pack the place index and hillshade with the graph; write both variants."""
+    """Pack the place index and hillshade with the graph; write both forms."""
+    import hashlib
+    import shutil
+
     from .download import ADDRESSES_PARQUET, PLACES_PARQUET
     from .places import build_addresses, build_hillshade, build_places
     from .webgraph import bundle
@@ -294,16 +309,44 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
 
     with step("bundling the route page payload", log):
         packed = bundle(dict(graph, arrays=arrays), strings)
-    payload = {
-        "manifest": packed["manifest"], "bundle": packed["b64"],
-        "meta": packed["meta"], "addr": addr_meta, "hillshade": hillshade,
+    common = {
+        "manifest": packed["manifest"], "meta": packed["meta"], "addr": addr_meta,
         "labels": _labels(ctx), "default": _default_trip(places, pts),
     }
-    SIMPLE_HTML.write_text(_render_simple(payload, artifact=False), encoding="utf-8")
-    ARTIFACT_HTML.write_text(_render_simple(payload, artifact=True), encoding="utf-8")
-    log.info("wrote %s (%s) and %s (%s)", SIMPLE_HTML.name,
-             human_bytes(SIMPLE_HTML.stat().st_size), ARTIFACT_HTML.name,
-             human_bytes(ARTIFACT_HTML.stat().st_size))
+
+    # one file that opens from disk: everything inline
+    inline = dict(common, bundle=packed["b64"],
+                  hillshade=hillshade and {"bounds": hillshade["bounds"],
+                                           "data_uri": hillshade["data_uri"]})
+    SIMPLE_HTML.write_text(_route_page_html(inline, linked=False), encoding="utf-8")
+
+    # the static site: fetchable, cacheable files, content-hashed data names
+    data_dir = SITE_DIR / "data"
+    if data_dir.exists():
+        shutil.rmtree(data_dir)
+    data_dir.mkdir(parents=True)
+    gz = packed["gz"]
+    gz_name = f"graph-{hashlib.sha1(gz).hexdigest()[:10]}.bin.gz"
+    (data_dir / gz_name).write_bytes(gz)
+    linked = dict(common, bundle_url="data/" + gz_name, bundle_bytes=len(gz))
+    if hillshade:
+        png = hillshade["png"]
+        png_name = f"hillshade-{hashlib.sha1(png).hexdigest()[:10]}.png"
+        (data_dir / png_name).write_bytes(png)
+        linked["hillshade"] = {"bounds": hillshade["bounds"], "url": "data/" + png_name}
+    else:
+        linked["hillshade"] = None
+    SITE_INDEX.write_text(_route_page_html(linked, linked=True), encoding="utf-8")
+    (SITE_DIR / "app.css").write_text(_asset("simple.css"), encoding="utf-8")
+    (SITE_DIR / "app.js").write_text(_asset("engine.js") + "\n" + _asset("simple.js"),
+                                     encoding="utf-8")
+    (SITE_DIR / "leaflet.css").write_text(_vendor("leaflet-1.9.4.css"), encoding="utf-8")
+    (SITE_DIR / "leaflet.js").write_text(_vendor("leaflet-1.9.4.min.js"), encoding="utf-8")
+    (SITE_DIR / "favicon.svg").write_text(_FAVICON, encoding="utf-8")
+    (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")
+    site_bytes = sum(f.stat().st_size for f in SITE_DIR.rglob("*") if f.is_file())
+    log.info("wrote %s (%s) and the site in %s (%s)", SIMPLE_HTML.name,
+             human_bytes(SIMPLE_HTML.stat().st_size), SITE_DIR.name, human_bytes(site_bytes))
     return SIMPLE_HTML
 
 
@@ -343,7 +386,7 @@ def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
 
     with step("writing the explorer HTML", log):
         INTERACTIVE_HTML.parent.mkdir(parents=True, exist_ok=True)
-        INTERACTIVE_HTML.write_text(_render(payload, artifact=False), encoding="utf-8")
+        INTERACTIVE_HTML.write_text(_render(payload), encoding="utf-8")
     log.info("wrote %s (%s)", INTERACTIVE_HTML.name,
              human_bytes(INTERACTIVE_HTML.stat().st_size))
     with step("writing the route page", log):
