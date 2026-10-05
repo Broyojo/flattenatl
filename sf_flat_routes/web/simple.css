@@ -50,7 +50,7 @@ h1 small{font-weight:400;color:var(--muted);margin-left:6px;font-size:12px}
 .row{display:flex;gap:8px;align-items:center;min-width:0}
 .field{position:relative;flex:1;min-width:0}
 .field label{position:absolute;left:10px;top:5px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);pointer-events:none}
-.field input{width:100%;padding:19px 10px 6px;background:var(--field);color:var(--ink);border:1px solid transparent;border-radius:8px;font:14px var(--font)}
+.field input{width:100%;padding:19px 28px 6px 10px;text-overflow:ellipsis;background:var(--field);color:var(--ink);border:1px solid transparent;border-radius:8px;font:14px var(--font)}
 .field input:focus-visible{outline:2px solid var(--focus);outline-offset:0;border-color:transparent}
 .field input::placeholder{color:var(--muted);opacity:.8}
 .field .pin{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;background:var(--route);box-shadow:0 0 0 2px var(--card)}
