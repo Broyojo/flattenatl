@@ -42,7 +42,9 @@ pytestmark = [
 ]
 
 _SEARCHES = ["24th & mission", "1234 valencia", "golden gate park", "ferry building",
-             "church st and 24th st", "coit tower", "ocean beach", "caltrain"]
+             "church st and 24th st", "coit tower", "ocean beach", "caltrain",
+             "geary blvd & 25th ave", "25th avenue and geary boulevard", "cabrillo st & 38th ave",
+             "geary blvd"]
 
 _SCRIPT = """(queries) => {
     const fam = App.family, g = App.graph;
@@ -139,6 +141,11 @@ def test_search_finds_intersections_addresses_and_places(page_results):
     assert s["ocean beach"][0] == ["Ocean Beach", "beach"]
     assert any(n == "Caltrain" and k == "station" for n, k in s["caltrain"])
     assert any("Ferry Building" in n for n, _ in s["ferry building"])
+    # abbreviations and full words match the same corners
+    assert s["geary blvd & 25th ave"][0] == ["25th Avenue & Geary Boulevard", "intersection"]
+    assert s["25th avenue and geary boulevard"][0] == ["25th Avenue & Geary Boulevard", "intersection"]
+    assert s["cabrillo st & 38th ave"][0] == ["38th Avenue & Cabrillo Street", "intersection"]
+    assert any(k == "intersection" and "Geary Boulevard" in n for n, k in s["geary blvd"])
 
 
 def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
