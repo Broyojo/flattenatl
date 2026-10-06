@@ -31,13 +31,13 @@ the checks against known ground truth are in
 **Live: [flattensf.com](https://flattensf.com/)**
 
 Type where you are and where you are going, then drag the slider from
-**shortest** to **flattest** and watch the route change. Every position is a
-real route, solved in your browser over the full street graph with the same
-cost model the analysis uses; the slider scales how much a foot of climbing
-costs relative to a foot of walking, from nothing to enough that the route
-avoids every avoidable hill. The numbers and the elevation profile follow
-along, and the faint lines are the other members of the family, so you can
-see where the routes agree and where they part.
+**shortest** to **flattest** and watch the route change. The slider steps
+through every route that no other route beats on both distance and
+climbing, solved in your browser over the full street graph: sliding right
+never shortens the route and never adds climbing. The numbers, the
+elevation profile and the list of streets follow along, street names are
+drawn on the route itself, and the faint lines are the other routes in the
+family, so you can see where they agree and where they part.
 
 On a bike, **prefer calm streets** (on by default) measures distance in
 comfort rather than feet: a block with a protected lane or path from the
@@ -263,7 +263,10 @@ San Francisco are `denied` + `heading=backward` (one-way, 7,034 segments),
 per-mode `denied`/`allowed`/`designated`, and `as_private` /
 `at_destination` conditional access. One-way is enforced for bicycles and
 ignored for pedestrians, since OSM `oneway` describes vehicle movement;
-contraflow bicycle lanes are honoured.
+contraflow bicycle lanes are honoured. A rule for a specific mode outranks
+a rule for all modes: SF's Slow Streets carry "everyone: destination only"
+alongside "foot: allowed, bicycle: designated", and reading the general
+rule first had dropped 9.9 km of them from the walking and cycling graphs.
 
 Two classification facts shaped the mode filters, both verified against the
 data rather than assumed:
@@ -315,7 +318,10 @@ Four objectives, all configured in [`sf_flat_routes/config.py`](sf_flat_routes/c
 Bicycle costs additionally carry stress weights (protected cycleway 0.85,
 19th Avenue and Van Ness 1.9) and respect one-way restrictions. These are
 switched **off** for `shortest`, so that every distance-penalty and
-elevation-saved figure is measured against a genuine shortest path.
+elevation-saved figure is measured against a genuine shortest path. The
+route finder's "prefer calm streets" uses a separate table that also knows
+the SFMTA facility class of each block
+([`bikeways.py`](sf_flat_routes/bikeways.py)).
 
 ### Corridor detection
 
@@ -339,13 +345,14 @@ neighborhood access points; embedding the graph itself turned out to be both
 *smaller* and far more useful.
 
 The packing is in [`sf_flat_routes/webgraph.py`](sf_flat_routes/webgraph.py):
-69,864 nodes, 160,608 directed arcs, 87,776 edge geometries and the vector
-overlays are quantised into typed arrays, concatenated into one buffer,
-gzipped and base64-encoded once. The browser inflates it with
-`DecompressionStream` and takes `TypedArray` views straight onto the result —
-no JSON number parsing. 18.4 MB of raw arrays compress to 4.6 MB, so the
-whole self-contained page is **6.5 MB and interactive in under four
-seconds**, against 19.3 MB for the precomputed version.
+69,864 nodes, 161,176 directed arcs, 87,776 edge geometries and the vector
+overlays are quantised into typed arrays, concatenated into one buffer and
+gzipped. The browser inflates it with `DecompressionStream` and takes
+`TypedArray` views straight onto the result — no JSON number parsing. For
+the route finder, 11.3 MB of arrays, geometry, places and addresses
+compress to 4.8 MB, so the whole self-contained page is **6.9 MB and
+interactive in under four seconds**, against 19.3 MB for the precomputed
+version.
 
 Routing is a Dijkstra over a CSR adjacency with a flat binary heap and a
 visit-stamp array, so nothing is reallocated between searches. It settles a
@@ -552,7 +559,7 @@ the maps. Re-running any stage from cache is near-instant.
 ### Tests
 
 ```bash
-python -m pytest tests/ -q             # 109 tests
+python -m pytest tests/ -q             # 150 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,
@@ -599,15 +606,15 @@ sf_flat_routes/
   web/                their HTML, CSS and JavaScript: the shared router
                       (engine.js), the route finder (simple.js), the
                       explorer (app.js) and the warped city (warp.js)
-site/                 flattensf.com as a static site (built; deployed
-                      to GitHub Pages by .github/workflows/pages.yml)
   sensitivity.py      rebuilds the pipeline under perturbed parameters
   report.py           generates outputs/findings.md from the outputs
   pipeline.py         stage orchestration
   __main__.py         CLI
   vendor/             Leaflet 1.9.4 (BSD-2-Clause), inlined into the map
+site/                 flattensf.com as a static site (built; deployed
+                      to GitHub Pages by .github/workflows/pages.yml)
 notebooks/            exploration only; the analysis runs from the CLI
-tests/                139 tests
+tests/                150 tests
 data/raw/             cached source data (never modified)
 data/processed/       cached intermediate products
 outputs/              deliverables
@@ -633,6 +640,12 @@ Beyond the two dataset substitutions above:
   41,330 of 87,776 edges are long enough to carry a reliable maximum.
 - **One access point per neighborhood.** Large or awkward neighborhoods
   (Bayview, Lakeshore, the Presidio) are served worse than compact ones.
+- **The route finder counts climbing, not steepness.** Its two axes are
+  distance and total feet climbed, so 230 ft at 25% and 250 ft at 13% look
+  almost the same. From Market & Taylor to the top of Nob Hill, straight up
+  Taylor (0.48 mi, 229 ft, 25% at worst) beats Polk and California (1.39 mi,
+  251 ft, 13% at worst) on both axes, so the gentler ride never appears on
+  the slider. A steepness-weighted climbing cost is the planned fix.
 - **No traffic, signals, surface quality or safety.** The bicycle comfort
   weights are a table over road class and SFMTA facility class, not a
   level-of-traffic-stress model: a painted lane on a six-lane arterial
