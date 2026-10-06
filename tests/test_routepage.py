@@ -115,8 +115,52 @@ def page_results():
                      member: App.family.unique.includes(u),
                      endsAtCoit: Math.abs(end.lat - hit.lat) < 0.004 && Math.abs(end.lng - hit.lon) < 0.004 };
         }""")
+        # bike mode, Divisadero & Hayes to Marina Green: with calm streets on
+        # the ride goes up Scott (no bikeway, but quiet); off, straight up
+        # Divisadero, the shortest line and a busy arterial
+        page.evaluate("""() => {
+            document.querySelector('#mode button[data-v=bike]').click();
+            App.setPoint('from', App.pointAt(-122.4375, 37.7747, 'Divisadero & Hayes'), false);
+            App.setPoint('to', App.pointAt(-122.4435, 37.8060, 'Marina Green'), false);
+            App.recompute('auto');
+        }""")
+        page.wait_for_function("App.family && !App.family.partial", timeout=120_000)
+        streets = """() => {
+            const g = App.graph, u = App.family.shortest, km = {};
+            for (const a of u.arcs) {
+                const n = App.geom.edgeInfo(g.arcEdge[a]).name || '?';
+                km[n] = (km[n] || 0) + g.arcLen[a] / g.DM;
+            }
+            return { streets: km, distance_m: u.stats.distance_m, stress_m: u.stats.stress_m,
+                     calm: App.state.calm, token: App.token(), n: App.family.unique.length,
+                     rowHidden: document.getElementById('calmrow').hidden,
+                     monotone: App.family.unique.every((m, i, arr) => i === 0
+                        || (m.stats[App.lenKey()] >= arr[i - 1].stats[App.lenKey()] - 1e-6
+                            && m.stats.elev_gain_m <= arr[i - 1].stats.elev_gain_m + 1e-6)) };
+        }"""
+        out["calm_on"] = page.evaluate(streets)
+        page.evaluate("() => document.getElementById('calm').click()")
+        page.wait_for_function("App.family && !App.family.partial && !App.state.calm", timeout=120_000)
+        out["calm_off"] = page.evaluate(streets)
         browser.close()
     return out, errors
+
+
+def test_calm_streets_keep_a_bike_off_divisadero(page_results):
+    out, _ = page_results
+    on, off = out["calm_on"], out["calm_off"]
+    assert on["calm"] and not off["calm"]
+    assert not on["rowHidden"]
+    assert on["token"].split("~")[5] == "b" and off["token"].split("~")[5] == "bx"
+    assert off["streets"].get("Divisadero Street", 0) > 3000
+    assert on["streets"].get("Divisadero Street", 0) < 500
+    assert on["streets"].get("Scott Street", 0) > 3000
+    # calm costs a little real distance and buys a lot of comfort
+    assert on["distance_m"] < off["distance_m"] * 1.15
+    assert on["stress_m"] < off["stress_m"]
+    # the family stays a frontier in the units it was searched in
+    assert on["monotone"] and off["monotone"]
+    assert on["n"] >= 2 and off["n"] >= 2
 
 
 def test_the_page_loads_and_routes_its_default_trip(page_results):

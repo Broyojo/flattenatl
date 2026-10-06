@@ -69,6 +69,7 @@ class Bundle {
     this.manifest = manifest;
     this.decoder = new TextDecoder();
   }
+  has(name) { return !!this.manifest.arrays[name]; }
   array(name) {
     const m = this.manifest.arrays[name];
     if (!m) throw new Error("missing array " + name);
@@ -164,6 +165,18 @@ class Graph {
     this.DM = meta.scales.dm; this.CM = meta.scales.cm;
     this.COORD = meta.scales.coord; this.GRADE = meta.scales.grade;
 
+    // Comfort-weighted arc lengths for bike mode, in the same units as
+    // arcLen: a block of busy arterial counts as more than its length, a
+    // block with a protected lane as less (bikeways.py has the table).
+    // Searches that take a ``stress`` flag route on these instead.
+    this.arcLenStress = this.arcLen;
+    if (bundle.has("edge_stress")) {
+      this.edgeStress = bundle.array("edge_stress");
+      const q = meta.scales.stress || 100, s = new Int32Array(this.m);
+      for (let a = 0; a < this.m; a++) s[a] = Math.round(this.arcLen[a] * this.edgeStress[this.arcEdge[a]] / q);
+      this.arcLenStress = s;
+    }
+
     // scratch arrays reused across searches, with a visit stamp so nothing
     // has to be cleared between runs
     this.dist = new Float64Array(this.n);
@@ -179,10 +192,11 @@ class Graph {
   nodeLat(i) { return this.lat[i] / this.COORD; }
   nodeZ(i) { return this.nodeElev[i] / this.DM; }
   modeBit(mode) { return mode === "bike" ? 2 : 1; }
+  lengths(stress) { return stress ? this.arcLenStress : this.arcLen; }
 
   /* Cost of one arc in equivalent metres. Mirrors routing.edge_costs. */
-  arcCost(a, w, mult) {
-    let c = (this.arcLen[a] / this.DM) * mult[this.arcCls[a]];
+  arcCost(a, w, mult, len = this.arcLen) {
+    let c = (len[a] / this.DM) * mult[this.arcCls[a]];
     c += w.alpha * (this.arcGain[a] / this.CM);
     if (w.beta) {
       let pen = 0;
@@ -208,7 +222,7 @@ class Graph {
   route(src, dst, mode, w) {
     if (src === dst || src < 0 || dst < 0) return null;
     const bit = this.modeBit(mode);
-    const mult = this.multipliers(mode, w);
+    const mult = this.multipliers(mode, w), len = this.lengths(w.stress);
     const { dist, prev, seen, done, indptr, head } = this;
     const stamp = ++this.stamp;
 
@@ -260,7 +274,7 @@ class Graph {
         if ((this.arcFlags[a] & bit) === 0) continue;
         const v = head[a];
         if (seen[v] === stamp && done[v]) continue;
-        const nd = dv + this.arcCost(a, w, mult);
+        const nd = dv + this.arcCost(a, w, mult, len);
         if (seen[v] !== stamp || nd < dist[v]) {
           seen[v] = stamp; dist[v] = nd; prev[v] = a; done[v] = 0;
           push(nd, v);
@@ -398,10 +412,10 @@ class Graph {
    *
    * Returns a search object; call step(budgetMs) until it reports done, so
    * the page can keep painting. */
-  pareto(src, dst, mode, { eps = 50, epsNode = eps, dCap = Infinity, gCap = Infinity, maxLabels = 4e6 } = {}) {
+  pareto(src, dst, mode, { eps = 50, epsNode = eps, dCap = Infinity, gCap = Infinity, maxLabels = 4e6, stress = false } = {}) {
     const g = this;
-    const bit = g.modeBit(mode);
-    const h1 = g.boundsTo(dst, mode, g.arcLen), h2 = g.boundsTo(dst, mode, g.arcGain);
+    const bit = g.modeBit(mode), len = g.lengths(stress);
+    const h1 = g.boundsTo(dst, mode, len), h2 = g.boundsTo(dst, mode, g.arcGain);
     const g2min = new Float64Array(g.n).fill(Infinity);
     let cap = 1 << 16;
     let lNode = new Int32Array(cap), lG1 = new Int32Array(cap), lG2 = new Int32Array(cap),
@@ -439,12 +453,14 @@ class Graph {
           const arcs = [];
           for (let y = x; lParent[y] >= 0; y = lParent[y]) arcs.push(lArc[y]);
           arcs.reverse();
-          search.solutions.push({ arcs, length: g1 / g.DM, gain: g2 / g.CM });
+          let real = 0;
+          for (const a of arcs) real += g.arcLen[a];
+          search.solutions.push({ arcs, length: real / g.DM, weighted: g1 / g.DM, gain: g2 / g.CM });
           continue;
         }
         for (let a = g.indptr[node]; a < g.indptr[node + 1]; a++) {
           if ((g.arcFlags[a] & bit) === 0) continue;
-          const v = g.head[a], n1 = g1 + g.arcLen[a], n2 = g2 + g.arcGain[a];
+          const v = g.head[a], n1 = g1 + len[a], n2 = g2 + g.arcGain[a];
           if (n1 + h1[v] > dCap || n2 + h2[v] > gCap) continue;
           if (n2 + epsNode > g2min[v] || n2 + h2[v] + eps > g2min[dst]) continue;
           add(v, n1, n2, x, a);
@@ -495,11 +511,12 @@ class Graph {
 
   /* Aggregate a route exactly as routing.summarise_route does. */
   summarise(arcs) {
-    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0;
+    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0, stressed = 0;
     const th = new Array(this.th.length).fill(0);
     for (const a of arcs) {
       const L = this.arcLen[a] / this.DM;
       dist += L;
+      stressed += this.arcLenStress[a] / this.DM;
       gain += this.arcGain[a] / this.CM;
       loss += this.arcLoss[a] / this.CM;
       const g = this.arcMaxGrade[a] / this.GRADE;
@@ -510,7 +527,7 @@ class Graph {
     if (!arcs.length) maxg = 0;
     const prof = this.profile(arcs);
     return {
-      distance_m: dist, elev_gain_m: gain, elev_loss_m: loss,
+      distance_m: dist, stress_m: stressed, elev_gain_m: gain, elev_loss_m: loss,
       max_grade: maxg, avg_abs_grade: dist > 0 ? wgrade / dist : 0,
       thresholds: th, n_edges: arcs.length,
       start_elev_m: prof.z.length ? prof.z[0] : 0,
@@ -977,7 +994,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
 
   /* -------------------------------------------------------------- the app */
   const App = {
-    state: { mode: "walk", from: null, to: null, t: 1, focus: "from" },
+    state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -1159,6 +1176,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           if (this.state.mode === btn.dataset.v) return;
           this.state.mode = btn.dataset.v;
           for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+          $("calmrow").hidden = this.state.mode !== "bike";
           // endpoints may sit on stairs or a footpath that a bike cannot use
           for (const w of ["from", "to"]) {
             const p = this.state[w]; if (!p) continue;
@@ -1167,6 +1185,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           this.recompute(false);
         });
       }
+      $("calm").addEventListener("change", () => {
+        this.state.calm = $("calm").checked;
+        this.recompute(false);
+      });
       const sl = $("sl");
       sl.addEventListener("input", () => { this.state.t = +sl.value; this.show(); this.writeHash(); });
       $("share").addEventListener("click", () => {
@@ -1183,10 +1205,15 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
 
     /* ------------------------------------------------------------ routing */
     /* length + alpha * gain, on real length (no comfort multipliers), so the
-     * family is a true distance-versus-climbing trade-off */
+     * family is a true distance-versus-climbing trade-off. On a bike with
+     * calm streets on, length is comfort-weighted instead (engine.js
+     * arcLenStress): a protected lane counts shorter, a busy arterial
+     * longer, and the climbing axis is untouched. */
+    calm() { return this.state.mode === "bike" && this.state.calm; },
+    lenKey() { return this.calm() ? "stress_m" : "distance_m"; },
     weights(alpha) {
       return { alpha, beta: 0, gamma: 0, penalties: [0, 0, 0, 0, 0], extreme: 0,
-        use_class_multiplier: false };
+        use_class_multiplier: false, stress: this.calm() };
     },
 
     recompute(fit) {
@@ -1227,8 +1254,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       $("share").hidden = false; $("sharebox").hidden = true;
 
       const search = g.pareto(from.node, to.node, mode, {
-        eps: EPS_GAIN_CM, epsNode: EPS_NODE_CM,
-        dCap: Math.round(flatStats.distance_m * g.DM) + 1,
+        eps: EPS_GAIN_CM, epsNode: EPS_NODE_CM, stress: this.calm(),
+        dCap: Math.round(flatStats[this.lenKey()] * g.DM) + 1,
         gCap: Math.round(first.stats.elev_gain_m * g.CM) + 1,
       });
       const run = () => {
@@ -1255,7 +1282,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     finishFamily(search, first, fm, fit) {
       let members = search.solutions.map((r) => this.member(r.arcs));
       if (!members.length) members = [first];
-      members.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
+      const key = this.lenKey();
+      members.sort((a, b) => a.stats[key] - b.stats[key]);
       // The weighted flattest route is a frontier point by construction.
       // The search's tolerances can leave it out by a few feet, and if the
       // search was cut short it is missing altogether, so it closes the
@@ -1434,7 +1462,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const sh = this.family.shortest.stats;
       if (u === this.family.shortest) {
         $("delta").innerHTML = this.family.unique.length > 1
-          ? "The shortest route. Slide right to trade distance for less climbing."
+          ? (this.calm() ? "The shortest route on calm streets. Slide right to trade distance for less climbing."
+            : "The shortest route. Slide right to trade distance for less climbing.")
           : "Shortest and flattest at once.";
       } else {
         const dd = s.distance_m - sh.distance_m, dc = sh.elev_gain_m - s.elev_gain_m;
@@ -1537,7 +1566,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     token() {
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
-      return ["t", c(from), c(to), mode === "bike" ? "b" : "w", t.toFixed(3),
+      return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
     writeHash() {
@@ -1558,8 +1587,11 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (parts[0] !== "t" || parts.length < 8) return false;
       const nums = parts.slice(1, 5).map(Number);
       if (nums.some((v) => !Number.isFinite(v))) return false;
-      if (parts[5] === "b") {
+      if (parts[5] === "b" || parts[5] === "bx") {
         this.state.mode = "bike";
+        this.state.calm = parts[5] === "b";
+        $("calm").checked = this.state.calm;
+        $("calmrow").hidden = false;
         for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.v === "bike" ? "true" : "false");
       }
       const tt = parseFloat(parts[6]);

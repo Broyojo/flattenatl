@@ -69,6 +69,7 @@ class Bundle {
     this.manifest = manifest;
     this.decoder = new TextDecoder();
   }
+  has(name) { return !!this.manifest.arrays[name]; }
   array(name) {
     const m = this.manifest.arrays[name];
     if (!m) throw new Error("missing array " + name);
@@ -164,6 +165,18 @@ class Graph {
     this.DM = meta.scales.dm; this.CM = meta.scales.cm;
     this.COORD = meta.scales.coord; this.GRADE = meta.scales.grade;
 
+    // Comfort-weighted arc lengths for bike mode, in the same units as
+    // arcLen: a block of busy arterial counts as more than its length, a
+    // block with a protected lane as less (bikeways.py has the table).
+    // Searches that take a ``stress`` flag route on these instead.
+    this.arcLenStress = this.arcLen;
+    if (bundle.has("edge_stress")) {
+      this.edgeStress = bundle.array("edge_stress");
+      const q = meta.scales.stress || 100, s = new Int32Array(this.m);
+      for (let a = 0; a < this.m; a++) s[a] = Math.round(this.arcLen[a] * this.edgeStress[this.arcEdge[a]] / q);
+      this.arcLenStress = s;
+    }
+
     // scratch arrays reused across searches, with a visit stamp so nothing
     // has to be cleared between runs
     this.dist = new Float64Array(this.n);
@@ -179,10 +192,11 @@ class Graph {
   nodeLat(i) { return this.lat[i] / this.COORD; }
   nodeZ(i) { return this.nodeElev[i] / this.DM; }
   modeBit(mode) { return mode === "bike" ? 2 : 1; }
+  lengths(stress) { return stress ? this.arcLenStress : this.arcLen; }
 
   /* Cost of one arc in equivalent metres. Mirrors routing.edge_costs. */
-  arcCost(a, w, mult) {
-    let c = (this.arcLen[a] / this.DM) * mult[this.arcCls[a]];
+  arcCost(a, w, mult, len = this.arcLen) {
+    let c = (len[a] / this.DM) * mult[this.arcCls[a]];
     c += w.alpha * (this.arcGain[a] / this.CM);
     if (w.beta) {
       let pen = 0;
@@ -208,7 +222,7 @@ class Graph {
   route(src, dst, mode, w) {
     if (src === dst || src < 0 || dst < 0) return null;
     const bit = this.modeBit(mode);
-    const mult = this.multipliers(mode, w);
+    const mult = this.multipliers(mode, w), len = this.lengths(w.stress);
     const { dist, prev, seen, done, indptr, head } = this;
     const stamp = ++this.stamp;
 
@@ -260,7 +274,7 @@ class Graph {
         if ((this.arcFlags[a] & bit) === 0) continue;
         const v = head[a];
         if (seen[v] === stamp && done[v]) continue;
-        const nd = dv + this.arcCost(a, w, mult);
+        const nd = dv + this.arcCost(a, w, mult, len);
         if (seen[v] !== stamp || nd < dist[v]) {
           seen[v] = stamp; dist[v] = nd; prev[v] = a; done[v] = 0;
           push(nd, v);
@@ -398,10 +412,10 @@ class Graph {
    *
    * Returns a search object; call step(budgetMs) until it reports done, so
    * the page can keep painting. */
-  pareto(src, dst, mode, { eps = 50, epsNode = eps, dCap = Infinity, gCap = Infinity, maxLabels = 4e6 } = {}) {
+  pareto(src, dst, mode, { eps = 50, epsNode = eps, dCap = Infinity, gCap = Infinity, maxLabels = 4e6, stress = false } = {}) {
     const g = this;
-    const bit = g.modeBit(mode);
-    const h1 = g.boundsTo(dst, mode, g.arcLen), h2 = g.boundsTo(dst, mode, g.arcGain);
+    const bit = g.modeBit(mode), len = g.lengths(stress);
+    const h1 = g.boundsTo(dst, mode, len), h2 = g.boundsTo(dst, mode, g.arcGain);
     const g2min = new Float64Array(g.n).fill(Infinity);
     let cap = 1 << 16;
     let lNode = new Int32Array(cap), lG1 = new Int32Array(cap), lG2 = new Int32Array(cap),
@@ -439,12 +453,14 @@ class Graph {
           const arcs = [];
           for (let y = x; lParent[y] >= 0; y = lParent[y]) arcs.push(lArc[y]);
           arcs.reverse();
-          search.solutions.push({ arcs, length: g1 / g.DM, gain: g2 / g.CM });
+          let real = 0;
+          for (const a of arcs) real += g.arcLen[a];
+          search.solutions.push({ arcs, length: real / g.DM, weighted: g1 / g.DM, gain: g2 / g.CM });
           continue;
         }
         for (let a = g.indptr[node]; a < g.indptr[node + 1]; a++) {
           if ((g.arcFlags[a] & bit) === 0) continue;
-          const v = g.head[a], n1 = g1 + g.arcLen[a], n2 = g2 + g.arcGain[a];
+          const v = g.head[a], n1 = g1 + len[a], n2 = g2 + g.arcGain[a];
           if (n1 + h1[v] > dCap || n2 + h2[v] > gCap) continue;
           if (n2 + epsNode > g2min[v] || n2 + h2[v] + eps > g2min[dst]) continue;
           add(v, n1, n2, x, a);
@@ -495,11 +511,12 @@ class Graph {
 
   /* Aggregate a route exactly as routing.summarise_route does. */
   summarise(arcs) {
-    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0;
+    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0, stressed = 0;
     const th = new Array(this.th.length).fill(0);
     for (const a of arcs) {
       const L = this.arcLen[a] / this.DM;
       dist += L;
+      stressed += this.arcLenStress[a] / this.DM;
       gain += this.arcGain[a] / this.CM;
       loss += this.arcLoss[a] / this.CM;
       const g = this.arcMaxGrade[a] / this.GRADE;
@@ -510,7 +527,7 @@ class Graph {
     if (!arcs.length) maxg = 0;
     const prof = this.profile(arcs);
     return {
-      distance_m: dist, elev_gain_m: gain, elev_loss_m: loss,
+      distance_m: dist, stress_m: stressed, elev_gain_m: gain, elev_loss_m: loss,
       max_grade: maxg, avg_abs_grade: dist > 0 ? wgrade / dist : 0,
       thresholds: th, n_edges: arcs.length,
       start_elev_m: prof.z.length ? prof.z[0] : 0,

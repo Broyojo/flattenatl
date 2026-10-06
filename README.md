@@ -39,6 +39,15 @@ avoids every avoidable hill. The numbers and the elevation profile follow
 along, and the faint lines are the other members of the family, so you can
 see where the routes agree and where they part.
 
+On a bike, **prefer calm streets** (on by default) measures distance in
+comfort rather than feet: a block with a protected lane or path from the
+SFMTA bikeway network counts as 0.8 of its length, a quiet street as 1, a
+busy arterial without a lane as 1.4 to 2. The climbing axis is untouched,
+so the slider still runs from the shortest comfortable ride to the
+flattest; on twenty everyday trips across the city it adds about 7% to
+the distance ridden and takes the share on bare arterials from 29% to 1%.
+Untick it and the shortest end is the genuine shortest path.
+
 ![The route finder](outputs/screenshot_route_finder.png)
 
 Place search is **offline**: street intersections ("24th & Mission"),
@@ -434,7 +443,8 @@ limitations.
 | USGS 3DEP 1 m bare-earth DEM, project `CA_SanFrancisco_B23` | USGS 3D Elevation Program | 1 m GSD, EPSG:26910, metres above NAVD88 | Public domain | Primary elevation source |
 | USGS 3DEP 1/3 arc-second DEM, tile `n38w123` | USGS 3D Elevation Program | ~10 m, EPSG:4269 | Public domain | Independent cross-check only |
 | San Francisco neighborhoods (37-unit planning set) | SF Planning / DataSF, mirrored by Code for America | 37 polygons | Open data | Neighborhood boundaries |
-| Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Bicycle overlay (see limitations) |
+| SFMTA Bike Network, linear features | SFMTA via DataSF (downloaded by hand 2026-10-05) | 5,457 centreline segments with facility class I–IV, buffering, barrier type | Open data (CCSF) | Route finder: bike comfort weighting (`bikeways.py`) |
+| Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Explorer bicycle overlay (see limitations) |
 | Overture Maps base theme (land use, infrastructure, land), release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Mapped outlines and points | ODbL 1.0 | Route finder search only: parks, schools, stations, piers, peaks, beaches |
 | Overture Maps places, release `2026-08-19.0` | Overture Maps Foundation (Meta / Microsoft POI data) | Points with names, categories, confidence | CDLA-Permissive 2.0 | Route finder search only: landmarks, shops, cafes (noisy; see `places.py`) |
 | Overture Maps addresses, release `2026-08-19.0` | Overture Maps Foundation (OpenAddresses / City of San Francisco) | Address points | Open (public domain source) | Route finder search only: street addresses |
@@ -443,7 +453,7 @@ limitations.
 
 `data.sfgov.org` and `sfgov.org` are **blocked by the build environment's
 network egress policy**, so two datasets could not be fetched from their
-authoritative source:
+authoritative source by the pipeline:
 
 1. **Neighborhood boundaries.** The official 41-unit *Analysis Neighborhoods*
    product could not be downloaded. This project uses the long-standing
@@ -453,13 +463,16 @@ authoritative source:
    differ mainly in how the Sunset, Richmond and Twin Peaks areas are
    subdivided, which affects representative-point placement but not the
    street model. The mirror does not state its boundary vintage.
-2. **SFMTA bikeway network and Slow Streets.** Not retrievable. The bicycle
-   and low-stress layers are instead derived from Overture/OSM attributes
+2. **SFMTA bikeway network and Slow Streets.** The explorer's bicycle and
+   low-stress layers are derived from Overture/OSM attributes
    (`class=cycleway`, `living_street`, `pedestrian`, bicycle-designated
-   paths). OSM bicycle tagging in San Francisco is largely conflated with
-   SFMTA data by local mappers, so this is a good proxy — but it is **not
-   authoritative**, and it carries no SFMTA facility class (I/II/III/IV) and
-   no official Slow Streets designation.
+   paths), which carry no SFMTA facility class. The route finder's bike
+   comfort weighting is different: it uses the real SFMTA Bike Network,
+   downloaded by hand to `data/raw/sfmta_bike_network.geojson` and matched
+   to the street graph geometrically (`bikeways.py`: within 12 m and 25°,
+   over at least half of an edge; about 580 of the network's 760 km land on
+   routable edges, the rest being Presidio and park paths and one-way
+   pairs). Slow Streets come through Overture's access rules instead.
 
 Both substitutions are recorded in the dataset registry and flagged
 `[SUBSTITUTED]` by `python -m sf_flat_routes sources`.
@@ -579,6 +592,7 @@ sf_flat_routes/
   validate.py         checks against known ground truth
   viz_static.py       publication maps (matplotlib + lidar hillshade)
   webgraph.py         packs the graph into a compressed browser payload
+  bikeways.py         SFMTA bikeway conflation and the bike comfort table
   places.py           offline place index for the route finder, and the
                       hillshade base image
   viz_interactive.py  assembles the two self-contained web pages
@@ -619,8 +633,10 @@ Beyond the two dataset substitutions above:
   41,330 of 87,776 edges are long enough to carry a reliable maximum.
 - **One access point per neighborhood.** Large or awkward neighborhoods
   (Bayview, Lakeshore, the Presidio) are served worse than compact ones.
-- **No traffic, signals, surface quality or safety.** The bicycle stress
-  weights are a proxy for road class, not a level-of-traffic-stress model.
+- **No traffic, signals, surface quality or safety.** The bicycle comfort
+  weights are a table over road class and SFMTA facility class, not a
+  level-of-traffic-stress model: a painted lane on a six-lane arterial
+  scores the same as one on a two-lane street.
 - **Gradients are attenuated at the extremes.** Published "steepest street"
   figures are measured over the single steepest pitch, sometimes only 15–20 m
   long, and the smoothing chain costs roughly eight percentage points there.

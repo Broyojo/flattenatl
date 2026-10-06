@@ -42,6 +42,7 @@ import gzip
 import numpy as np
 import pandas as pd
 
+from .bikeways import BIKEWAYS_GEOJSON, conflate, stress as bike_stress
 from .config import GRADE_THRESHOLDS, MODES, ROUTING_PROFILES
 from .utils import get_logger, step
 
@@ -55,6 +56,7 @@ DM = 20.0          # 5 cm units per metre (max edge 1212 m fits uint16)
 CM = 100.0         # centimetres per metre
 GRADE_Q = 10000.0  # int16 units per unit gradient (0.01% resolution)
 COORD_Q = 1e6      # micro-degrees
+STRESS_Q = 100.0   # hundredths of a comfort multiplier
 
 
 def _b64(arr: np.ndarray) -> str:
@@ -214,6 +216,12 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
         geom = "".join(geom_parts)
 
         # ---- per-edge display attributes ---------------------------
+        if BIKEWAYS_GEOJSON.exists():
+            facility = conflate(edges)
+        else:
+            log.warning("%s not found: bike stress falls back to road class only",
+                        BIKEWAYS_GEOJSON)
+            facility = None
         names = edges["name"].fillna("")
         name_values = sorted(set(names) - {""})
         name_idx = {n: i + 1 for i, n in enumerate(name_values)}
@@ -235,6 +243,10 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
                             / (edges["length_m"] / 1000.0).clip(lower=1e-6))
                            .clip(0, 6000), DM),
             "lowstress": edges["low_stress"].fillna(False).to_numpy().astype("<u1"),
+            # bike comfort multiplier, hundredths (100 = an ordinary block),
+            # from the SFMTA bikeway network where it is on disk
+            "stress": np.clip(np.round(bike_stress(edges, facility) * STRESS_Q),
+                              1, 255).astype("<u1"),
         }
 
         arrays: dict[str, np.ndarray] = {
@@ -257,7 +269,9 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
             "classes": classes,
             "names": name_values,
             "thresholds": _TH,
-            "scales": {"dm": DM, "cm": CM, "grade": GRADE_Q, "coord": COORD_Q},
+            "scales": {"dm": DM, "cm": CM, "grade": GRADE_Q, "coord": COORD_Q,
+                       "stress": STRESS_Q},
+            "bikeways": facility is not None,
             "profiles": {
                 name: {
                     "alpha": w.alpha, "beta": w.beta, "gamma": w.gamma,

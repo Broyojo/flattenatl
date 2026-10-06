@@ -222,29 +222,27 @@ DATASETS: tuple[Dataset, ...] = (
     ),
     Dataset(
         key="bike_network",
-        title="SFMTA bicycle network / SF Slow Streets",
+        title="SFMTA Bike Network (linear features)",
         publisher="SFMTA via DataSF",
-        url="https://data.sfgov.org/  (dataset ids: SFMTA Bikeway Network; "
-            "Slow Streets)",
-        accessed="not retrieved",
-        resolution="n/a",
+        url="https://data.sfgov.org/Transportation/MTA-Bike-Network-Linear-Features/",
+        accessed="2026-10-05 (downloaded by hand; data.sfgov.org is blocked "
+                 "from the build environment)",
+        resolution="5,457 centreline segments with SFMTA facility class "
+                   "(I path, II lane, III route, IV separated), buffering and "
+                   "barrier type; data_as_of 2023-10 to 2026-04",
         licence="Open data (City & County of San Francisco)",
-        role="Optional bicycle-facility and low-stress-street overlay.",
-        local="(derived instead from Overture/OSM attributes)",
+        role="Bike-mode comfort weighting on the route page ('prefer calm "
+             "streets'); see bikeways.py.",
+        local="data/raw/sfmta_bike_network.geojson",
         limitations=(
-            "Not retrievable: data.sfgov.org is blocked by the environment's "
-            "network policy. Bicycle facilities and low-stress streets are "
-            "therefore derived from Overture/OSM attributes instead "
-            "(class=cycleway, class=living_street, class=pedestrian, "
-            "bicycle-designated paths). OSM bicycle tagging in San Francisco "
-            "is largely conflated with SFMTA data by local mappers, so the "
-            "derived layer is a good but not authoritative proxy; it will not "
-            "carry SFMTA facility classes (Class I/II/III/IV) or the official "
-            "Slow Streets designation list."
+            "Keyed by CNN, which Overture does not carry, so segments are "
+            "matched to graph edges geometrically (within 12 m and 25 degrees, "
+            "over at least half the edge). Roughly 580 of 760 km match; the "
+            "rest is Presidio and park paths outside the routable graph or "
+            "double-counted one-way pairs. Slow Streets are not in this "
+            "dataset; they are handled through Overture access rules."
         ),
         optional=True,
-        substituted=True,
-        substitution_reason="data.sfgov.org blocked by network policy.",
     ),
 )
 
