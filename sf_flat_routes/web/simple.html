@@ -38,6 +38,10 @@
       <button data-v="bike" aria-pressed="false">Bike</button>
     </div>
   </div>
+  <label class="calm" id="calmrow" hidden>
+    <input type="checkbox" id="calm" checked>
+    <span>Prefer calm streets <small>bike lanes and quiet streets count shorter, busy arterials longer</small></span>
+  </label>
   <div class="statusrow">
     <div class="status" id="status"></div>
     <button class="link" id="share" type="button" hidden>Copy link</button>
@@ -66,7 +70,10 @@
     stop being routes). Sliding right never shortens the route and never
     adds climbing. Climbing is cumulative gain, not the net difference
     between the endpoints. Stairways are allowed on foot and excluded on a
-    bike. Faint lines show the other routes along the way. Place search is offline: street intersections,
+    bike. On a bike, <i>prefer calm streets</i> measures distance in comfort:
+    a block with a protected lane or path (SFMTA bikeway network) counts as
+    0.8 of its length, a quiet street as 1, a busy arterial without a lane as
+    1.4 to 2. Faint lines show the other routes along the way. Place search is offline: street intersections,
     places and addresses for San Francisco are built into this page.
     <a href="/*__REPO_URL__*/">Source, data and the full analysis</a>.</p>
   </details>

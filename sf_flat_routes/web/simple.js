@@ -288,7 +288,7 @@
 
   /* -------------------------------------------------------------- the app */
   const App = {
-    state: { mode: "walk", from: null, to: null, t: 1, focus: "from" },
+    state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -470,6 +470,7 @@
           if (this.state.mode === btn.dataset.v) return;
           this.state.mode = btn.dataset.v;
           for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+          $("calmrow").hidden = this.state.mode !== "bike";
           // endpoints may sit on stairs or a footpath that a bike cannot use
           for (const w of ["from", "to"]) {
             const p = this.state[w]; if (!p) continue;
@@ -478,6 +479,10 @@
           this.recompute(false);
         });
       }
+      $("calm").addEventListener("change", () => {
+        this.state.calm = $("calm").checked;
+        this.recompute(false);
+      });
       const sl = $("sl");
       sl.addEventListener("input", () => { this.state.t = +sl.value; this.show(); this.writeHash(); });
       $("share").addEventListener("click", () => {
@@ -494,10 +499,15 @@
 
     /* ------------------------------------------------------------ routing */
     /* length + alpha * gain, on real length (no comfort multipliers), so the
-     * family is a true distance-versus-climbing trade-off */
+     * family is a true distance-versus-climbing trade-off. On a bike with
+     * calm streets on, length is comfort-weighted instead (engine.js
+     * arcLenStress): a protected lane counts shorter, a busy arterial
+     * longer, and the climbing axis is untouched. */
+    calm() { return this.state.mode === "bike" && this.state.calm; },
+    lenKey() { return this.calm() ? "stress_m" : "distance_m"; },
     weights(alpha) {
       return { alpha, beta: 0, gamma: 0, penalties: [0, 0, 0, 0, 0], extreme: 0,
-        use_class_multiplier: false };
+        use_class_multiplier: false, stress: this.calm() };
     },
 
     recompute(fit) {
@@ -538,8 +548,8 @@
       $("share").hidden = false; $("sharebox").hidden = true;
 
       const search = g.pareto(from.node, to.node, mode, {
-        eps: EPS_GAIN_CM, epsNode: EPS_NODE_CM,
-        dCap: Math.round(flatStats.distance_m * g.DM) + 1,
+        eps: EPS_GAIN_CM, epsNode: EPS_NODE_CM, stress: this.calm(),
+        dCap: Math.round(flatStats[this.lenKey()] * g.DM) + 1,
         gCap: Math.round(first.stats.elev_gain_m * g.CM) + 1,
       });
       const run = () => {
@@ -566,7 +576,8 @@
     finishFamily(search, first, fm, fit) {
       let members = search.solutions.map((r) => this.member(r.arcs));
       if (!members.length) members = [first];
-      members.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
+      const key = this.lenKey();
+      members.sort((a, b) => a.stats[key] - b.stats[key]);
       // The weighted flattest route is a frontier point by construction.
       // The search's tolerances can leave it out by a few feet, and if the
       // search was cut short it is missing altogether, so it closes the
@@ -745,7 +756,8 @@
       const sh = this.family.shortest.stats;
       if (u === this.family.shortest) {
         $("delta").innerHTML = this.family.unique.length > 1
-          ? "The shortest route. Slide right to trade distance for less climbing."
+          ? (this.calm() ? "The shortest route on calm streets. Slide right to trade distance for less climbing."
+            : "The shortest route. Slide right to trade distance for less climbing.")
           : "Shortest and flattest at once.";
       } else {
         const dd = s.distance_m - sh.distance_m, dc = sh.elev_gain_m - s.elev_gain_m;
@@ -848,7 +860,7 @@
     token() {
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
-      return ["t", c(from), c(to), mode === "bike" ? "b" : "w", t.toFixed(3),
+      return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
     writeHash() {
@@ -869,8 +881,11 @@
       if (parts[0] !== "t" || parts.length < 8) return false;
       const nums = parts.slice(1, 5).map(Number);
       if (nums.some((v) => !Number.isFinite(v))) return false;
-      if (parts[5] === "b") {
+      if (parts[5] === "b" || parts[5] === "bx") {
         this.state.mode = "bike";
+        this.state.calm = parts[5] === "b";
+        $("calm").checked = this.state.calm;
+        $("calmrow").hidden = false;
         for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.v === "bike" ? "true" : "false");
       }
       const tt = parseFloat(parts[6]);
