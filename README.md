@@ -625,6 +625,34 @@ recomputed only with `--force`. Output is byte-reproducible: rebuilding the
 maps and reports from the same cached data produces identical files, so the
 repository does not churn on every run.
 
+## Other cities
+
+Nothing in the method is specific to San Francisco, but the code is
+written for one city and has no city switch yet. Overture covers the
+world, so the street network, places and addresses come for free; the
+rest is a handful of settings and two or three local datasets:
+
+- **Bounding box and projection** in [`config.py`](sf_flat_routes/config.py):
+  `SF_BBOX`, and `CRS_PROJECTED`, the UTM zone of the city's lidar
+  (Seattle is in the same zone as San Francisco, EPSG:26910).
+- **Elevation** in [`sources.py`](sf_flat_routes/sources.py): the USGS
+  3DEP 1 m project and tile names covering the city (`LIDAR_PROJECT`,
+  `LIDAR_TILES`). Bare-earth lidar matters; a 10 m or 30 m DEM blurs
+  street grades badly.
+- **City boundary and neighborhoods** (`NEIGHBORHOOD_URL`): any polygon
+  set works; it clips the network and seeds the analysis's access points.
+- **Bike facilities** (optional): the city's own bikeway layer, mapped onto
+  the facility codes in [`bikeways.py`](sf_flat_routes/bikeways.py). Without
+  it bike mode falls back to road class.
+- **Validation** ([`validate.py`](sf_flat_routes/validate.py)): the known
+  steep and flat streets are San Francisco's and need local replacements,
+  or the stage can be skipped.
+- **Branding and the default trip**: `PRODUCT_NAME`, `SITE_DOMAIN` and
+  `_DEFAULT_TRIP` in [`viz_interactive.py`](sf_flat_routes/viz_interactive.py).
+
+Then run the pipeline above; the route finder in `site/` is static and
+can be hosted anywhere.
+
 ## Limitations
 
 Beyond the two dataset substitutions above:
