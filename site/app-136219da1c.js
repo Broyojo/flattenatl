@@ -1069,6 +1069,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   // while loops are being tried the profile morphs from one candidate to
   // the next; each morph takes this long, and text changes crossfade
   const SCAN_MORPH_MS = 420, FADE_MS = 160, GROW_MS = 200;
+  const PROF_PAD = 6;                        // the profile's side padding, px
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -1388,6 +1389,19 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.routeLayer = L.layerGroup().addTo(map);
       this.markers = L.layerGroup().addTo(map);
       this.labelLayer = L.layerGroup().addTo(map);
+      this.hoverLayer = L.layerGroup().addTo(map);
+
+      // a pointer over the profile (or a finger dragged across it) marks
+      // that point of the route on both the graph and the map
+      const cv = $("prof");
+      const at = (e) => {
+        const r = cv.getBoundingClientRect();
+        this.setHover(clamp((e.clientX - r.left - PROF_PAD) / (r.width - 2 * PROF_PAD), 0, 1));
+      };
+      cv.addEventListener("pointermove", at);
+      cv.addEventListener("pointerdown", (e) => { at(e); try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine */ } });
+      cv.addEventListener("pointerleave", () => this.setHover(null));
+      for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerType !== "mouse") this.setHover(null); });
 
       map.on("click", (e) => {
         const which = this.state.loop ? "from"
@@ -1665,6 +1679,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
      * stats following, so the search reads as the shape of the run being
      * worked out rather than a wait.  What was shown before fades out. */
     scanStart(from, targetM) {
+      this.setHover(null);
       const fl = this.familyLayer, rl = this.routeLayer, old = [];
       fl.eachLayer((l) => old.push(l)); rl.eachLayer((l) => old.push(l));
       if (old.length) fadeOut(old, 260, () => old.forEach((l) => { fl.removeLayer(l); rl.removeLayer(l); }));
@@ -1796,6 +1811,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     clearRoute() {
+      this.setHover(null);
       this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
       $("turns").hidden = true;
       this.shown = null; this._handoff = null; this._profCur = null;
@@ -1837,6 +1853,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.drawRoute(u, colour, prev && !immediate ? prev : null, !!hand);
       this.drawStats(u, from || u);
       this.animateProfile(from || u, u, 300, hand ? { range: { from: hand.range, to: rangeOf(this.family.unique) } } : {});
+      this.placeHoverDot();
     },
 
     tintRoute(colour) {
@@ -2007,6 +2024,25 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     /* ------------------------------------------------------------ profile */
+    /* the point a fraction of the way along the route on show, marked on
+     * the map and on the graph; null clears it */
+    setHover(f) {
+      if (f !== null && (!this.shown || this._scan)) f = null;
+      this._hover = f;
+      if (f === null) { this.hoverLayer.clearLayers(); this._hoverDot = null; }
+      else this.placeHoverDot();
+      if (!this._profAnim && this.shown) this.drawProfile(this.shown, this.shown, 1);
+    },
+    placeHoverDot() {
+      if (this._hover === null || this._hover === undefined || !this.shown) return;
+      const ll = alongRoute(this.shown, this._hover);
+      const fill = $("prof").dataset.colour || css("--route");
+      if (!this._hoverDot) {
+        this._hoverDot = L.circleMarker(ll, { radius: 6, color: "#fff", weight: 2.5, fillColor: fill, fillOpacity: 1,
+          interactive: false }).addTo(this.hoverLayer);
+      } else { this._hoverDot.setLatLng(ll); this._hoverDot.setStyle({ fillColor: fill }); }
+    },
+
     /* morph the profile from a to b; opts.range eases the vertical scale
      * between two {min, max} ranges, opts.stats carries the numbers along,
      * opts.done runs when the morph completes (not when it is cut short) */
@@ -2052,7 +2088,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         steepest: lerp(a.stats.steepest, b.stats.steepest, k) } };
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
-      const padL = 6, padR = 6, top = 8, bottom = 18;
+      const padL = PROF_PAD, padR = PROF_PAD, top = 8, bottom = 18;
       const X = (i) => padL + (W - padL - padR) * i / (n - 1);
       const Y = (v) => top + (H - top - bottom) * (1 - (v - zmin) / (zmax - zmin));
       const colour = cv.dataset.colour || css("--route");
@@ -2072,10 +2108,28 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       ctx.textAlign = "left"; ctx.fillText(lab(z[0]), padL, H - 5);
       ctx.textAlign = "right"; ctx.fillText(lab(z[n - 1]), W - padR, H - 5);
       ctx.textAlign = "center"; ctx.fillText((dist / MI).toFixed(1) + " mi", W / 2, H - 5);
-      if (hi > n * 0.06 && hi < n * 0.94 && z[hi] - Math.min(z[0], z[n - 1]) > 6) {
+      const hov = this._hover !== null && this._hover !== undefined && !this._scan && k >= 1 ? this._hover : null;
+      if (hov === null && hi > n * 0.06 && hi < n * 0.94 && z[hi] - Math.min(z[0], z[n - 1]) > 6) {
         ctx.textAlign = X(hi) < 40 ? "left" : X(hi) > W - 40 ? "right" : "center";
         ctx.fillStyle = css("--ink");
         ctx.fillText(lab(z[hi]), X(hi), Math.max(10, Y(z[hi]) - 5));
+      }
+      // the hovered point: a guide line, a dot, and its distance and height
+      if (hov !== null) {
+        const fi = hov * (n - 1), i0 = Math.floor(fi), i1 = Math.min(n - 1, i0 + 1);
+        const zv = lerp(z[i0], z[i1], fi - i0), x = padL + (W - padL - padR) * hov, y = Y(zv);
+        ctx.strokeStyle = css("--muted"); ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, H - bottom); ctx.stroke(); ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = colour; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5; ctx.stroke();
+        const text = (hov * dist / MI).toFixed(1) + " mi · " + lab(zv);
+        ctx.font = "600 10px " + css("--mono");
+        const tw = ctx.measureText(text).width + 10;
+        let tx = x - tw / 2; tx = clamp(tx, padL, W - padR - tw);
+        const ty = y - 10 >= top + 14 ? y - 10 : y + 10;
+        ctx.fillStyle = css("--card"); ctx.globalAlpha = 0.92;
+        ctx.beginPath(); ctx.roundRect(tx, ty - 11, tw, 15, 4); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(text, tx + 5, ty);
       }
     },
 
@@ -2259,6 +2313,25 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     return out.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
   }
 
+  /* the point a fraction f of the way along a route's geometry; the
+   * cumulative length along its points is kept on the route */
+  function alongRoute(u, f) {
+    const pts = u.latlngs;
+    if (!u._cum) {
+      const c = new Float64Array(pts.length);
+      const ky = 110540, kx = 111320 * Math.cos(pts[0][0] * Math.PI / 180);
+      for (let i = 1; i < pts.length; i++) {
+        const dx = (pts[i][1] - pts[i - 1][1]) * kx, dy = (pts[i][0] - pts[i - 1][0]) * ky;
+        c[i] = c[i - 1] + Math.sqrt(dx * dx + dy * dy);
+      }
+      u._cum = c;
+    }
+    const c = u._cum, want = f * c[c.length - 1];
+    let lo = 0, hi = c.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (c[mid] <= want) lo = mid; else hi = mid; }
+    const t = c[hi] > c[lo] ? (want - c[lo]) / (c[hi] - c[lo]) : 0;
+    return L.latLng(lerp(pts[lo][0], pts[hi][0], t), lerp(pts[lo][1], pts[hi][1], t));
+  }
   function resample(prof, n) {
     const { d, z } = prof;
     const out = new Float64Array(n);
