@@ -1629,7 +1629,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.show(true);
         // a loop that spills out of view, or has shrunk to a small part of
         // it (the length slider moved down), is refitted and recentred
-        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit(true);
+        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit();
         this.writeHash();
         $("share").hidden = false; $("sharebox").hidden = true;
       };
@@ -2079,17 +2079,15 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
       return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
     },
-    fit(smooth) {
+    fit() {
       if (!this.family) return;
       const b = this.familyBounds();
       const size = this.map.getSize();
       const wide = size.x > 640;
       const card = $("card").getBoundingClientRect();
-      const opts = wide
+      this.map.fitBounds(b, wide
         ? { paddingTopLeft: [card.right + 24, 24], paddingBottomRight: [40, 40], maxZoom: 15 }
-        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, card.height + 16], maxZoom: 15 };
-      if (smooth && !reducedMotion()) this.map.flyToBounds(b, Object.assign({ duration: 0.9 }, opts));
-      else this.map.fitBounds(b, opts);
+        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, card.height + 16], maxZoom: 15 });
     },
 
     /* ------------------------------------------------------------ sharing */
