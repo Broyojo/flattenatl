@@ -1578,7 +1578,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           : "The flattest of " + search.accepted.length + " loops tried.";
         this.drawFamily();
         this.show(true);
-        if (fit === true || (fit === "auto" && !this.inView())) this.fit();
+        // a loop that spills out of view, or has shrunk to a small part of
+        // it (the length slider moved down), is refitted and recentred
+        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit();
         this.writeHash();
         $("share").hidden = false; $("sharebox").hidden = true;
       };
@@ -1947,6 +1949,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const wide = size.x > 640;
       const x0 = wide ? card.right + 16 : 16, y1 = wide ? size.y - 16 : card.top - 16;
       return sw.x >= x0 && ne.x <= size.x - 16 && ne.y >= 16 && sw.y <= y1;
+    },
+    /* how much of the uncovered map the family spans, in its larger
+     * direction (1 = edge to edge) */
+    viewShare() {
+      if (!this.family) return 1;
+      const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
+      const b = this.familyBounds();
+      const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
+      const wide = size.x > 640;
+      const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
+      return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
     },
     fit() {
       if (!this.family) return;

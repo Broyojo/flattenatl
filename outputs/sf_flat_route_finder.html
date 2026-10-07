@@ -749,10 +749,10 @@ button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 .swap{transition:opacity .2s ease,width .3s ease,margin .3s ease}
 .loopbtn{position:relative}
 .loopbtn .ic{position:absolute;inset:0;margin:auto;width:20px;height:20px;transition:opacity .25s ease,transform .3s ease}
-.loopbtn .ic-line circle.a{fill:var(--route)}
+.loopbtn .ic circle.a{fill:var(--route)}
 .loopbtn .ic-line circle.b{fill:var(--ink)}
 .loopbtn .ic-line{opacity:0;transform:rotate(-45deg) scale(.7)}
-.loopbtn[aria-pressed="true"] .ic-loop{opacity:0;transform:rotate(90deg) scale(.7)}
+.loopbtn[aria-pressed="true"] .ic-loop{opacity:0;transform:scale(.7)}
 .loopbtn[aria-pressed="true"] .ic-line{opacity:1;transform:none}
 #tofield{transition:flex-grow .3s ease,opacity .2s ease,margin .3s ease}
 #mode{flex-grow:0;transition:flex-grow .3s ease}
@@ -820,7 +820,7 @@ details a{color:var(--accent)}
     </div>
     <button class="swap" id="swap" title="Swap" aria-label="Swap origin and destination">&#8645;</button>
     <button class="swap loopbtn" id="loopbtn" type="button" title="Make it a loop" aria-label="Make it a loop" aria-pressed="false">
-      <svg class="ic ic-loop" viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10.5A6 6 0 1 1 13.6 5.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M14.4 1.9l-.6 3.5-3.5-.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <svg class="ic ic-loop" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="9.2" r="5.6" fill="none" stroke="currentColor" stroke-width="1.8"/><circle class="a" cx="10" cy="14.8" r="2.6"/></svg>
       <svg class="ic ic-line" viewBox="0 0 20 20" aria-hidden="true"><line x1="5" y1="15" x2="15" y2="5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle class="a" cx="4.6" cy="15.4" r="2.6"/><circle class="b" cx="15.4" cy="4.6" r="2.6"/></svg>
     </button>
   </div>
@@ -2468,7 +2468,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           : "The flattest of " + search.accepted.length + " loops tried.";
         this.drawFamily();
         this.show(true);
-        if (fit === true || (fit === "auto" && !this.inView())) this.fit();
+        // a loop that spills out of view, or has shrunk to a small part of
+        // it (the length slider moved down), is refitted and recentred
+        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit();
         this.writeHash();
         $("share").hidden = false; $("sharebox").hidden = true;
       };
@@ -2837,6 +2839,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const wide = size.x > 640;
       const x0 = wide ? card.right + 16 : 16, y1 = wide ? size.y - 16 : card.top - 16;
       return sw.x >= x0 && ne.x <= size.x - 16 && ne.y >= 16 && sw.y <= y1;
+    },
+    /* how much of the uncovered map the family spans, in its larger
+     * direction (1 = edge to edge) */
+    viewShare() {
+      if (!this.family) return 1;
+      const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
+      const b = this.familyBounds();
+      const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
+      const wide = size.x > 640;
+      const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
+      return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
     },
     fit() {
       if (!this.family) return;

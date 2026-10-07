@@ -77,10 +77,10 @@ button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 .swap{transition:opacity .2s ease,width .3s ease,margin .3s ease}
 .loopbtn{position:relative}
 .loopbtn .ic{position:absolute;inset:0;margin:auto;width:20px;height:20px;transition:opacity .25s ease,transform .3s ease}
-.loopbtn .ic-line circle.a{fill:var(--route)}
+.loopbtn .ic circle.a{fill:var(--route)}
 .loopbtn .ic-line circle.b{fill:var(--ink)}
 .loopbtn .ic-line{opacity:0;transform:rotate(-45deg) scale(.7)}
-.loopbtn[aria-pressed="true"] .ic-loop{opacity:0;transform:rotate(90deg) scale(.7)}
+.loopbtn[aria-pressed="true"] .ic-loop{opacity:0;transform:scale(.7)}
 .loopbtn[aria-pressed="true"] .ic-line{opacity:1;transform:none}
 #tofield{transition:flex-grow .3s ease,opacity .2s ease,margin .3s ease}
 #mode{flex-grow:0;transition:flex-grow .3s ease}
