@@ -2250,7 +2250,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     buildMap() {
       const map = L.map("map", {
         zoomControl: false, attributionControl: true, preferCanvas: true,
-        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.5,
+        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.25,
       });
       map.attributionControl.setPrefix("");
       map.attributionControl.addAttribution(
@@ -3007,9 +3007,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const size = this.map.getSize();
       const wide = size.x > 640;
       const card = $("card").getBoundingClientRect();
+      // generous margins that grow with the window: a long straight run
+      // that reaches the edge reads as cut off; the zoom control sits
+      // bottom right
+      const my = Math.max(56, Math.round(size.y * 0.12)), mx = Math.max(64, Math.round(size.x * 0.06));
       this.map.fitBounds(b, wide
-        ? { paddingTopLeft: [card.right + 24, 24], paddingBottomRight: [40, 40], maxZoom: 15 }
-        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, this.cardHeight() + 16], maxZoom: 15 });
+        ? { paddingTopLeft: [card.right + mx, my], paddingBottomRight: [mx, my + 16], maxZoom: 15 }
+        : { paddingTopLeft: [28, 36], paddingBottomRight: [28, this.cardHeight() + 28], maxZoom: 15 });
     },
     /* the height the card is about to have: blocks easing open or shut
      * carry their target height inline, so the bottom sheet's final size
