@@ -463,7 +463,7 @@ class Graph {
    * search.accepted (every loop that met the length and overlap tests). */
   loops(src, mode, { targetM, alpha = 30, stress = false, sectors = 24, tol = 0.12,
     maxOverlap = 0.3, penK = 3, keep = 3, nearM = 110, perArc = 8, minRound = 0.2,
-    tolM = 0.25 * 1609.344, retries = 3 } = {}) {
+    tolM = 0.25 * 1609.344, retries = 3, outBack = false } = {}) {
     const g = this, T = targetM, L = g.lengths(stress);
     // a few metres per arc keeps routes off zigzags through tiny segments
     const cost = new Float64Array(g.m);
@@ -543,7 +543,8 @@ class Graph {
       search.tried++;
       const m = measure(arcs);
       const r = { arcs, length: m.len, gain: m.gain, overlap: m.overlap, round: m.round, kind };
-      const shaped = m.overlap <= maxOverlap && m.round >= minRound;
+      // an out-and-back is allowed to be what it is
+      const shaped = kind === "outback" || (m.overlap <= maxOverlap && m.round >= minRound);
       if (shaped) { search.all.push(r); search.last = r; }
       if (shaped && Math.abs(m.len - T) <= band) search.accepted.push(r);
       else if (shaped && Math.abs(m.len - T) <= tol * T) search.loose.push(r);
@@ -559,6 +560,18 @@ class Graph {
       const r = consider(out.concat(back), "petal");
       if (r && tries > 0 && Math.abs(r.length - T) > band) {
         jobs.push(() => petal(s, want * T / r.length, tries - 1));
+      }
+    };
+    // the flattest way out to a turnaround about half the target away, and
+    // the flattest way back, which is usually the same streets
+    const outAndBack = (s, want, tries) => {
+      const w = pick(s, want, Math.max(150, 0.06 * T), true);
+      if (w < 0) return;
+      const out = g.treePath(F, w), back = g.treePath(B, w);
+      if (!out || !back) return;
+      const r = consider(out.concat(back), "outback");
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => outAndBack(s, want * T / r.length, tries - 1));
       }
     };
     // out to the first corner, across each next one, then home; every leg
@@ -599,6 +612,7 @@ class Graph {
           bySector[sectorOf(v)].push(v);
         }
         for (let s = 0; s < sectors; s++) {
+          if (outBack) jobs.push(() => outAndBack(s, 0.5 * T, retries));
           jobs.push(() => petal(s, 0.38 * T, retries));
           jobs.push(() => petal(s, 0.46 * T, retries));
         }

@@ -53,10 +53,14 @@ starts and ends in the same place. The slider becomes the loop's length
 (1 to 15 miles), and the page tries dozens of loops of about that length
 in every direction: out to one, two or three turning points (always a
 real intersection) and home by other streets, avoiding any street within
-a block of the way out. Loops that double back on themselves or are too
-thin to be a loop are dropped, and the flattest of the rest is shown,
+a block of the way out, plus an out-and-back in each direction (the
+flattest way to a turnaround half the distance away, and back). Loops
+that double back on themselves without being an out-and-back, or are too
+thin to be a loop, are dropped, and the flattest of the rest is shown,
 with how much less it climbs than a typical loop of the same length from
-the same start. The search takes well under a second; up to about 20
+the same start. Out-and-backs win more often than not (the Embarcadero,
+the Marina, the Great Highway); *Allow out and back* unticked keeps the
+run to true loops. The search takes well under a second; up to about 20
 miles it finds a loop from anywhere in the city, beyond that the city
 runs out.
 

@@ -296,7 +296,7 @@
   /* -------------------------------------------------------------- the app */
   const App = {
     state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
-      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null },
+      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: true },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -495,6 +495,10 @@
         this.state.calm = $("calm").checked;
         this.recompute(false);
       });
+      $("outback").addEventListener("change", () => {
+        this.state.outBack = $("outback").checked;
+        this.recompute(false);
+      });
       const sl = $("sl");
       sl.addEventListener("input", () => {
         if (!this.state.loop) { this.state.t = +sl.value; this.show(); this.writeHash(); return; }
@@ -546,6 +550,7 @@
       const label = on ? "Go from A to B" : "Make it a loop";
       btn.setAttribute("aria-pressed", on ? "true" : "false");
       btn.title = label; btn.setAttribute("aria-label", label);
+      $("obrow").hidden = !on;
       if (on) {
         this.state.savedTo = this.state.to; this.state.to = null;
         sl.min = LOOP_MIN_MI; sl.max = LOOP_MAX_MI; sl.step = LOOP_STEP_MI; sl.value = this.state.loopMi;
@@ -582,7 +587,7 @@
       const g = this.graph;
       swapText($("status"), "Trying loops…");
       $("slpos").textContent = fmtLoop(loopMi);
-      const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm() });
+      const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm(), outBack: this.state.outBack });
       this.scanStart(from, loopMi * MI);
       const run = () => {
         if (gen !== this._gen) return;
@@ -604,7 +609,7 @@
           swapText($("status"), "No loop from here. Try another start.");
           return;
         }
-        const members = search.loops.map((r) => this.member(r.arcs));
+        const members = search.loops.map((r) => Object.assign(this.member(r.arcs), { kind: r.kind }));
         members.forEach((m, i) => { m.id = i; });
         this.family = { unique: members, shortest: members[0], partial: false, loop: true,
           targetM: loopMi * MI, medianGain: search.medianGain, tried: search.accepted.length,
@@ -949,11 +954,12 @@
       const f = this.family, s = u.stats, box = $("delta");
       const med = f.medianGain, idx = f.unique.indexOf(u), n = f.unique.length;
       let html;
-      if (f.shortfall) html = "The longest loop that fits from here.";
+      const ob = u.kind === "outback" ? "Out and back. " : "";
+      if (f.shortfall) html = ob + "The longest loop that fits from here.";
       else if (Number.isFinite(med) && med - s.elev_gain_m >= 3 && f.tried >= 5) {
-        html = "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
+        html = ob + "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
           + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
-      } else html = "About as flat as loops from here get.";
+      } else html = ob + "About as flat as loops from here get.";
       swapText(box, (el) => {
         el.innerHTML = html;
         if (n > 1) {
@@ -1088,7 +1094,7 @@
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
       const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
-      if (this.state.loop) return ["l", c(from), m, String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
+      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "" : "l"), String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
       return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
@@ -1124,11 +1130,13 @@
       this.setPoint("to", this.pointAt(nums[2], nums[3], decLabel(parts[8] || "") || undefined), false);
       return true;
     },
-    /* #l~lon~lat~mode~miles~which~label */
+    /* #l~lon~lat~mode~miles~which~label (mode ending in l: loops only) */
     readLoopHash(parts) {
       const lon = +parts[1], lat = +parts[2], mi = +parts[4];
       if (![lon, lat, mi].every(Number.isFinite)) return false;
-      this.setMode(parts[3]);
+      let m = parts[3] || "w";
+      if (m.endsWith("l")) { m = m.slice(0, -1); this.state.outBack = false; $("outback").checked = false; }
+      this.setMode(m);
       this.state.loopMi = clamp(Math.round(mi / LOOP_STEP_MI) * LOOP_STEP_MI, LOOP_MIN_MI, LOOP_MAX_MI);
       this.setPoint("from", this.pointAt(lon, lat, decLabel(parts[6] || "") || undefined), false);
       this.setLoop(true, false);

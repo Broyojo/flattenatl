@@ -153,6 +153,12 @@ def page_results():
                 first: tail[r.arcs[0]], last: g.head[r.arcs[r.arcs.length - 1]],
                 connected: r.arcs.every((a, i) => i === 0 || tail[a] === g.head[r.arcs[i - 1]]) })) };
         }""")
+        out["outback"] = page.evaluate("""() => {
+            const g = App.graph, src = App.nearestNode(-122.4435, 37.8060);   // Marina Green
+            const run = (opts) => { const s = g.loops(src, 'walk', Object.assign({ targetM: 4 * 1609.344 }, opts));
+              while (!s.step(1e9)) {} return s.loops.map(r => ({ gain: r.gain, kind: r.kind, overlap: r.overlap, length: r.length })); };
+            return { loops: run({}), ob: run({ outBack: true }) };
+        }""")
         page.evaluate("""() => {
             document.querySelector('#mode button[data-v=walk]').click();
             App.setPoint('from', App.pointAt(-122.4113, 37.7604, 'Trick Dog'), false);
@@ -201,6 +207,18 @@ def test_loops_close_on_themselves_and_are_flat(page_results):
     # the flattest loop climbs well under what a typical loop from here does
     assert r["loops"][0]["gain"] < 0.75 * r["median"], r
     assert r["ms"] < 5000, r
+
+
+def test_out_and_backs_are_offered_only_when_allowed_and_are_flatter(page_results):
+    out, _ = page_results
+    r = out["outback"]
+    assert all(lp["kind"] != "outback" for lp in r["loops"])
+    best = r["ob"][0]
+    # from the Marina the flattest run is the promenade there and back
+    # (overlap counts the second pass over a street, so there and back is 0.5)
+    assert best["kind"] == "outback" and best["overlap"] > 0.4, best
+    assert best["gain"] < 0.5 * r["loops"][0]["gain"], (best, r["loops"][0])
+    assert abs(best["length"] - 4 * 1609.344) <= 0.25 * 1609.344
 
 
 def test_the_loop_button_folds_the_destination_away_and_back(page_results):

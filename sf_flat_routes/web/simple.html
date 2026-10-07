@@ -46,6 +46,10 @@
     <input type="checkbox" id="calm" checked>
     <span>Prefer calm streets <small>bike lanes and quiet streets count shorter, busy arterials longer</small></span>
   </label>
+  <label class="calm" id="obrow" hidden>
+    <input type="checkbox" id="outback" checked>
+    <span>Allow out and back <small>the same streets there and back, often the flattest way</small></span>
+  </label>
   <div class="statusrow">
     <div class="status" id="status"></div>
     <button class="link" id="share" type="button" hidden>Copy link</button>
@@ -75,7 +79,8 @@
     on a bike.</p>
     <p class="fine">The loop button turns the trip into a loop from one
     start: the slider sets the distance, dozens of loops of about that
-    length are tried in every direction, and the flattest is shown. On a
+    length are tried in every direction, out-and-backs included unless
+    you untick them, and the flattest is shown. On a
     bike, <i>prefer calm streets</i> counts protected lanes and paths
     (SFMTA bikeway network) as shorter than they are and busy arterials as
     longer.</p>

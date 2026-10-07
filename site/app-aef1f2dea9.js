@@ -463,7 +463,7 @@ class Graph {
    * search.accepted (every loop that met the length and overlap tests). */
   loops(src, mode, { targetM, alpha = 30, stress = false, sectors = 24, tol = 0.12,
     maxOverlap = 0.3, penK = 3, keep = 3, nearM = 110, perArc = 8, minRound = 0.2,
-    tolM = 0.25 * 1609.344, retries = 3 } = {}) {
+    tolM = 0.25 * 1609.344, retries = 3, outBack = false } = {}) {
     const g = this, T = targetM, L = g.lengths(stress);
     // a few metres per arc keeps routes off zigzags through tiny segments
     const cost = new Float64Array(g.m);
@@ -543,7 +543,8 @@ class Graph {
       search.tried++;
       const m = measure(arcs);
       const r = { arcs, length: m.len, gain: m.gain, overlap: m.overlap, round: m.round, kind };
-      const shaped = m.overlap <= maxOverlap && m.round >= minRound;
+      // an out-and-back is allowed to be what it is
+      const shaped = kind === "outback" || (m.overlap <= maxOverlap && m.round >= minRound);
       if (shaped) { search.all.push(r); search.last = r; }
       if (shaped && Math.abs(m.len - T) <= band) search.accepted.push(r);
       else if (shaped && Math.abs(m.len - T) <= tol * T) search.loose.push(r);
@@ -559,6 +560,18 @@ class Graph {
       const r = consider(out.concat(back), "petal");
       if (r && tries > 0 && Math.abs(r.length - T) > band) {
         jobs.push(() => petal(s, want * T / r.length, tries - 1));
+      }
+    };
+    // the flattest way out to a turnaround about half the target away, and
+    // the flattest way back, which is usually the same streets
+    const outAndBack = (s, want, tries) => {
+      const w = pick(s, want, Math.max(150, 0.06 * T), true);
+      if (w < 0) return;
+      const out = g.treePath(F, w), back = g.treePath(B, w);
+      if (!out || !back) return;
+      const r = consider(out.concat(back), "outback");
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => outAndBack(s, want * T / r.length, tries - 1));
       }
     };
     // out to the first corner, across each next one, then home; every leg
@@ -599,6 +612,7 @@ class Graph {
           bySector[sectorOf(v)].push(v);
         }
         for (let s = 0; s < sectors; s++) {
+          if (outBack) jobs.push(() => outAndBack(s, 0.5 * T, retries));
           jobs.push(() => petal(s, 0.38 * T, retries));
           jobs.push(() => petal(s, 0.46 * T, retries));
         }
@@ -1306,7 +1320,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   /* -------------------------------------------------------------- the app */
   const App = {
     state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
-      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null },
+      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: true },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -1505,6 +1519,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.state.calm = $("calm").checked;
         this.recompute(false);
       });
+      $("outback").addEventListener("change", () => {
+        this.state.outBack = $("outback").checked;
+        this.recompute(false);
+      });
       const sl = $("sl");
       sl.addEventListener("input", () => {
         if (!this.state.loop) { this.state.t = +sl.value; this.show(); this.writeHash(); return; }
@@ -1556,6 +1574,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const label = on ? "Go from A to B" : "Make it a loop";
       btn.setAttribute("aria-pressed", on ? "true" : "false");
       btn.title = label; btn.setAttribute("aria-label", label);
+      $("obrow").hidden = !on;
       if (on) {
         this.state.savedTo = this.state.to; this.state.to = null;
         sl.min = LOOP_MIN_MI; sl.max = LOOP_MAX_MI; sl.step = LOOP_STEP_MI; sl.value = this.state.loopMi;
@@ -1592,7 +1611,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const g = this.graph;
       swapText($("status"), "Trying loops…");
       $("slpos").textContent = fmtLoop(loopMi);
-      const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm() });
+      const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm(), outBack: this.state.outBack });
       this.scanStart(from, loopMi * MI);
       const run = () => {
         if (gen !== this._gen) return;
@@ -1614,7 +1633,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           swapText($("status"), "No loop from here. Try another start.");
           return;
         }
-        const members = search.loops.map((r) => this.member(r.arcs));
+        const members = search.loops.map((r) => Object.assign(this.member(r.arcs), { kind: r.kind }));
         members.forEach((m, i) => { m.id = i; });
         this.family = { unique: members, shortest: members[0], partial: false, loop: true,
           targetM: loopMi * MI, medianGain: search.medianGain, tried: search.accepted.length,
@@ -1959,11 +1978,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const f = this.family, s = u.stats, box = $("delta");
       const med = f.medianGain, idx = f.unique.indexOf(u), n = f.unique.length;
       let html;
-      if (f.shortfall) html = "The longest loop that fits from here.";
+      const ob = u.kind === "outback" ? "Out and back. " : "";
+      if (f.shortfall) html = ob + "The longest loop that fits from here.";
       else if (Number.isFinite(med) && med - s.elev_gain_m >= 3 && f.tried >= 5) {
-        html = "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
+        html = ob + "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
           + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
-      } else html = "About as flat as loops from here get.";
+      } else html = ob + "About as flat as loops from here get.";
       swapText(box, (el) => {
         el.innerHTML = html;
         if (n > 1) {
@@ -2098,7 +2118,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
       const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
-      if (this.state.loop) return ["l", c(from), m, String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
+      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "" : "l"), String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
       return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
@@ -2134,11 +2154,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.setPoint("to", this.pointAt(nums[2], nums[3], decLabel(parts[8] || "") || undefined), false);
       return true;
     },
-    /* #l~lon~lat~mode~miles~which~label */
+    /* #l~lon~lat~mode~miles~which~label (mode ending in l: loops only) */
     readLoopHash(parts) {
       const lon = +parts[1], lat = +parts[2], mi = +parts[4];
       if (![lon, lat, mi].every(Number.isFinite)) return false;
-      this.setMode(parts[3]);
+      let m = parts[3] || "w";
+      if (m.endsWith("l")) { m = m.slice(0, -1); this.state.outBack = false; $("outback").checked = false; }
+      this.setMode(m);
       this.state.loopMi = clamp(Math.round(mi / LOOP_STEP_MI) * LOOP_STEP_MI, LOOP_MIN_MI, LOOP_MAX_MI);
       this.setPoint("from", this.pointAt(lon, lat, decLabel(parts[6] || "") || undefined), false);
       this.setLoop(true, false);
