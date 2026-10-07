@@ -2895,6 +2895,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           b.addEventListener("click", () => {
             this.state.loopIdx = (idx + 1) % n;
             this.show(false);
+            if (!this.inView() || this.viewShare() < 0.35) this.fit();
             this.writeHash();
           });
           el.append(" ", b);
@@ -2975,9 +2976,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       }
     },
 
+    /* what the map is fitted to: the whole frontier between two places
+     * (its routes share the ends), but only the loop on show, since the
+     * other loops offered can lie in any direction from the start */
     familyBounds() {
       const b = L.latLngBounds([]);
-      for (const u of this.family.unique) for (const ll of u.latlngs) b.extend(ll);
+      const members = this.family.loop && this.shown ? [this.shown] : this.family.unique;
+      for (const u of members) for (const ll of u.latlngs) b.extend(ll);
       return b;
     },
     /* is the whole family inside the part of the map the card does not cover? */
