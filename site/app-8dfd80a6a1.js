@@ -1054,12 +1054,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   /* while loops are tried, the map and profile show a new one this often */
   // while loops are being tried the profile morphs from one candidate to
   // the next; each morph takes this long, and text changes crossfade
-  const SCAN_MORPH_MS = 420, FADE_MS = 160;
+  const SCAN_MORPH_MS = 420, FADE_MS = 160, GROW_MS = 200;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const lerp = (a, b, t) => a + (b - a) * t;
   const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const easeInOut = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
   function hexToRgb(h) {
     h = h.replace("#", "");
@@ -1601,6 +1602,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           setTimeout(run, 0);
           return;
         }
+        // a morph in flight finishes before the result takes over from it
+        if (this._scan && this._scan.busy) { this._scan.onIdle = finish; return; }
+        finish();
+      };
+      const finish = () => {
+        if (gen !== this._gen) return;
         this.scanEnd();
         if (!search.loops.length) {
           this.clearRoute();
@@ -1622,7 +1629,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.show(true);
         // a loop that spills out of view, or has shrunk to a small part of
         // it (the length slider moved down), is refitted and recentred
-        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit();
+        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit(true);
         this.writeHash();
         $("share").hidden = false; $("sharebox").hidden = true;
       };
@@ -1644,14 +1651,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       // the profile carries on from wherever it is; nothing drawn yet
       // means the first candidate rises out of a flat line
       const cur = !$("prof").hidden && this._profCur ? this._profCur : null;
-      this._scan = { cur, target: null, busy: false };
-      // frame the area the loops will cover before they start appearing
-      const r = targetM / 5, dLat = r / 110540, dLon = r / (111320 * Math.cos(from.lat * Math.PI / 180));
-      const area = L.latLngBounds([from.lat - dLat, from.lon - dLon], [from.lat + dLat, from.lon + dLon]);
-      const fake = { unique: [{ latlngs: [area.getSouthWest(), area.getNorthEast()] }] };
-      const keep = this.family; this.family = fake;
-      if (!this.inView() || this.viewShare() < 0.35) this.fit();
-      this.family = keep;
+      this._scan = { cur, target: null, busy: false, onIdle: null };
     },
     /* the latest candidate: morph to it once the current morph is done */
     scanShow(r) {
@@ -1666,13 +1666,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         from = { profile: { z: new Float64Array(m.profile.z.length).fill(z0) }, stats: s, range: { min: z0, max: z0 } };
       }
       sc.cur = null;
-      // the vertical scale only grows during the scan, eased with the shape
-      const to = rangeOf([m], from.range);
+      // the vertical scale follows each candidate, eased along with the shape
+      const to = rangeOf([m]);
       showSoft($("result"));
       $("prof").dataset.colour = css("--route");
       sc.busy = true;
-      this.animateProfile(from, m, SCAN_MORPH_MS, { range: { from: from.range, to }, stats: true,
-        done: () => { sc.busy = false; } });
+      this.animateProfile(from, m, SCAN_MORPH_MS, { range: { from: from.range, to }, stats: true, ease: easeInOut,
+        done: () => { sc.busy = false; if (sc.onIdle) { const f = sc.onIdle; sc.onIdle = null; f(); } } });
     },
     /* the result then morphs in from wherever the scan left the profile */
     scanEnd() {
@@ -1990,7 +1990,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (this._profAnim) cancelAnimationFrame(this._profAnim);
       const t0 = performance.now();
       const frame = (now) => {
-        const k = ease(clamp((now - t0) / ms, 0, 1));
+        const k = (opts.ease || ease)(clamp((now - t0) / ms, 0, 1));
         this.drawProfile(a, b, k, opts.range);
         if (opts.stats) {
           const p = a.stats, s = b.stats;
@@ -2079,15 +2079,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
       return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
     },
-    fit() {
+    fit(smooth) {
       if (!this.family) return;
       const b = this.familyBounds();
       const size = this.map.getSize();
       const wide = size.x > 640;
       const card = $("card").getBoundingClientRect();
-      this.map.fitBounds(b, wide
+      const opts = wide
         ? { paddingTopLeft: [card.right + 24, 24], paddingBottomRight: [40, 40], maxZoom: 15 }
-        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, card.height + 16], maxZoom: 15 });
+        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, card.height + 16], maxZoom: 15 };
+      if (smooth && !reducedMotion()) this.map.flyToBounds(b, Object.assign({ duration: 0.9 }, opts));
+      else this.map.fitBounds(b, opts);
     },
 
     /* ------------------------------------------------------------ sharing */
@@ -2245,24 +2247,64 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     el.classList.add("fading");
     el._swapTimer = setTimeout(() => {
       el._swapTimer = null;
-      const f = el._swap; el._swap = null; if (f) f();
+      const f = el._swap; el._swap = null; if (f) settle(el, f);
       el.classList.remove("fading");
     }, FADE_MS);
   }
+  /* run a change to an element's content, easing its height between
+   * what it was and what it has become so the blocks below slide */
+  function settle(el, change) {
+    const h0 = el.offsetHeight;
+    change();
+    const h1 = el.offsetHeight;
+    if (h0 === h1 || reducedMotion()) return;
+    el.style.transition = "none"; el.style.height = h0 + "px"; el.style.overflow = "hidden";
+    void el.offsetWidth;
+    el.style.transition = ""; el.style.height = h1 + "px";
+    clearTimeout(el._growTimer);
+    el._growTimer = setTimeout(() => { el.style.height = ""; el.style.overflow = ""; }, GROW_MS + 20);
+  }
+  function reducedMotion() { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
   /* and set content without a fade (a counter, the slider); a fade in
    * flight just picks up the latest value instead */
   function setText(el, value, html) {
     const apply = () => { if (html) el.innerHTML = value; else el.textContent = value; };
     if (el._swapTimer) el._swap = apply; else apply();
   }
-  /* hide and show blocks with the same fade */
+  /* hide and show blocks with the same fade, their space closing and
+   * opening (the card's gap included) rather than snapping */
   function hideSoft(el) {
-    if (el.hidden) return;
-    el.classList.add("fading");
-    setTimeout(() => { if (el.classList.contains("fading")) { el.hidden = true; el.classList.remove("fading"); } }, FADE_MS);
+    if (el.hidden || el._hiding) return;
+    el._hiding = true; el.classList.add("fading");
+    setTimeout(() => {
+      if (!el._hiding) return;                 // shown again meanwhile
+      el.style.transition = "none"; el.style.height = el.offsetHeight + "px"; el.style.overflow = "hidden";
+      void el.offsetWidth;
+      el.style.transition = ""; el.style.height = "0px"; el.style.marginTop = "-10px";
+      clearTimeout(el._growTimer);
+      el._growTimer = setTimeout(() => {
+        if (!el._hiding) return;
+        el.hidden = true; el._hiding = false; el.classList.remove("fading");
+        el.style.height = ""; el.style.marginTop = ""; el.style.overflow = "";
+      }, GROW_MS + 20);
+    }, reducedMotion() ? 0 : FADE_MS);
   }
   function showSoft(el) {
-    if (!el.hidden && !el.classList.contains("fading")) return;
+    const wasHiding = el._hiding; el._hiding = false;
+    if (!el.hidden && !wasHiding && !el.classList.contains("fading")) return;
+    clearTimeout(el._growTimer);
+    if (el.hidden || wasHiding) {
+      // open from whatever height it has now (0 when hidden) to its full height
+      const h0 = el.hidden ? 0 : el.offsetHeight;
+      el.hidden = false; el.classList.add("fading");
+      el.style.transition = "none"; el.style.height = ""; el.style.marginTop = ""; el.style.overflow = "hidden";
+      const h1 = el.offsetHeight;
+      el.style.height = h0 + "px"; if (h0 === 0) el.style.marginTop = "-10px";
+      void el.offsetWidth;
+      el.style.transition = ""; el.style.height = h1 + "px"; el.style.marginTop = "";
+      el._growTimer = setTimeout(() => { el.style.height = ""; el.style.overflow = ""; el.classList.remove("fading"); }, GROW_MS);
+      return;
+    }
     el.classList.add("fading"); el.hidden = false;
     void el.offsetWidth;                       // flush, so the fade-in runs
     el.classList.remove("fading");
