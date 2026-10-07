@@ -1468,6 +1468,11 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
             : this.pointAt(it.lon, it.lat, it.name);
           items = []; render();
           this.setPoint(which, pt, true);
+          // done typing here: on to the other field if it is still empty,
+          // otherwise out, so the card shows the result (on a phone it is
+          // folded to the fields while typing)
+          const other = which === "from" ? "to" : "from";
+          if (!this.state.loop && !this.state[other]) $(other).focus(); else input.blur();
           this.recompute("auto");
         };
         input.addEventListener("focus", () => {
@@ -1512,12 +1517,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
             const p = this.state[w]; if (!p) continue;
             this.state[w] = Object.assign({}, p, { node: this.nearestNode(p.lon, p.lat) });
           }
-          this.recompute(false);
+          this.recompute("auto");
         });
       }
       $("calm").addEventListener("change", () => {
         this.state.calm = $("calm").checked;
-        this.recompute(false);
+        this.recompute("auto");
       });
       $("outback").addEventListener("change", () => {
         this.state.outBack = $("outback").checked;
@@ -1594,7 +1599,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       $("to").value = this.state.to ? this.state.to.label : "";
       $("to").dataset.set = this.state.to ? "1" : "";
       this.drawMarkers();
-      if (recompute) this.recompute("auto");
+      if (recompute) this.recompute(true);
     },
 
     /* the flattest loops of about the chosen length from the start */
@@ -2107,7 +2112,27 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const card = $("card").getBoundingClientRect();
       this.map.fitBounds(b, wide
         ? { paddingTopLeft: [card.right + 24, 24], paddingBottomRight: [40, 40], maxZoom: 15 }
-        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, card.height + 16], maxZoom: 15 });
+        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, this.cardHeight() + 16], maxZoom: 15 });
+    },
+    /* the height the card is about to have: blocks easing open or shut
+     * carry their target height inline, so the bottom sheet's final size
+     * is known before the easing ends and the map can be fitted to it */
+    cardHeight() {
+      const card = $("card");
+      // while typing on a phone the card is folded to the fields; measure it
+      // as it will be once the result shows
+      const typing = card.classList.contains("typing");
+      if (typing) card.classList.remove("typing");
+      let h = card.getBoundingClientRect().height;
+      if (typing) card.classList.add("typing");
+      for (const el of card.querySelectorAll("[style]")) {
+        if (el.style.height) h += parseFloat(el.style.height) - el.getBoundingClientRect().height;
+        if (el.style.marginTop) h += parseFloat(el.style.marginTop) - parseFloat(getComputedStyle(el).marginTop);
+      }
+      const max = getComputedStyle(card).maxHeight;
+      if (max.endsWith("%")) h = Math.min(h, card.parentElement.clientHeight * parseFloat(max) / 100);
+      else if (max.endsWith("px")) h = Math.min(h, parseFloat(max));
+      return h;
     },
 
     /* ------------------------------------------------------------ sharing */
