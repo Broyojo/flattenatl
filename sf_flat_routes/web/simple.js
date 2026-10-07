@@ -497,7 +497,7 @@
       });
       $("outback").addEventListener("change", () => {
         this.state.outBack = $("outback").checked;
-        this.recompute(false);
+        this.recompute(true);            // a different kind of run: reframe it
       });
       const sl = $("sl");
       sl.addEventListener("input", () => {
