@@ -25,9 +25,13 @@
       <ul class="suggest" id="from_s" role="listbox" hidden></ul>
     </div>
     <button class="swap" id="swap" title="Swap" aria-label="Swap origin and destination">&#8645;</button>
+    <button class="swap loopbtn" id="loopbtn" type="button" title="Make it a loop" aria-label="Make it a loop" aria-pressed="false">
+      <svg class="ic ic-loop" viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10.5A6 6 0 1 1 13.6 5.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M14.4 1.9l-.6 3.5-3.5-.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <svg class="ic ic-line" viewBox="0 0 20 20" aria-hidden="true"><line x1="5" y1="15" x2="15" y2="5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle class="a" cx="4.6" cy="15.4" r="2.6"/><circle class="b" cx="15.4" cy="4.6" r="2.6"/></svg>
+    </button>
   </div>
   <div class="row">
-    <div class="field">
+    <div class="field" id="tofield">
       <label for="to">To</label>
       <input id="to" type="text" autocomplete="off" spellcheck="false" placeholder="Or click the map">
       <span class="pin to" aria-hidden="true"></span>
@@ -49,7 +53,7 @@
   <input id="sharebox" type="text" readonly hidden aria-label="Link to this route">
   <div class="slider">
     <input type="range" id="sl" min="0" max="1" step="0.001" value="1" aria-label="From shortest to flattest">
-    <div class="ends"><span>Shortest</span><b id="slpos"></b><span>Flattest</span></div>
+    <div class="ends"><span id="end0">Shortest</span><b id="slpos"></b><span id="end1">Flattest</span></div>
   </div>
   <div class="result" id="result" hidden>
     <div class="stat"><div class="v" id="v_dist"></div><div class="k">distance</div></div>
@@ -70,7 +74,11 @@
     stop being routes). Sliding right never shortens the route and never
     adds climbing. Climbing is cumulative gain, not the net difference
     between the endpoints. Stairways are allowed on foot and excluded on a
-    bike. On a bike, <i>prefer calm streets</i> measures distance in comfort:
+    bike. The loop button (next to swap) turns the trip into a loop from
+    one start: the slider picks the distance, and the page tries dozens of
+    loops of about that length in every direction, out to one, two or
+    three turning points and home by different streets, and shows the
+    one with the least climbing. On a bike, <i>prefer calm streets</i> measures distance in comfort:
     a block with a protected lane or path (SFMTA bikeway network) counts as
     0.8 of its length, a quiet street as 1, a busy arterial without a lane as
     1.4 to 2. Faint lines show the other routes along the way. Place search is offline: street intersections,

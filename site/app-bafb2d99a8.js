@@ -352,6 +352,279 @@ class Graph {
     return targets.map(t => (seen[t] === stamp && done[t]) ? dist[t] : Infinity);
   }
 
+  /* One Dijkstra over a per-arc cost array: forward from src, or with
+   * reverse, backward into src (dist[v] is then the cost of v -> src and
+   * prev[v] the first arc of that path). It can stop at a target, and edges
+   * marked in pen cost (1 + penK) times as much, which is how a loop's way
+   * home is pushed off the streets it went out on. len and gain carry the
+   * real length and climbing (m) of each tree path. */
+  tree(src, mode, cost, { reverse = false, target = -1, pen = null, penNode = null, penK = 0 } = {}) {
+    const n = this.n, bit = this.modeBit(mode), rev = reverse ? this.reverse() : null;
+    const dist = new Float64Array(n).fill(Infinity), prev = new Int32Array(n).fill(-1);
+    const done = new Uint8Array(n), len = new Float64Array(n), gain = new Float64Array(n);
+    const heap = new MinHeap();
+    dist[src] = 0; heap.push(0, src);
+    while (heap.n > 0) {
+      const u = heap.pop(), du = heap.topKey;
+      if (done[u] || du > dist[u]) continue;
+      done[u] = 1;
+      if (u === target) break;
+      const lo = reverse ? rev.indptr[u] : this.indptr[u], hi = reverse ? rev.indptr[u + 1] : this.indptr[u + 1];
+      for (let k = lo; k < hi; k++) {
+        const a = reverse ? rev.arcs[k] : k;
+        if ((this.arcFlags[a] & bit) === 0) continue;
+        const v = reverse ? rev.tail[a] : this.head[a];
+        let c = cost[a];
+        if ((pen !== null && pen[this.arcEdge[a]]) || (penNode !== null && penNode[v])) c *= 1 + penK;
+        const nd = du + c;
+        if (nd < dist[v]) {
+          dist[v] = nd; prev[v] = a; heap.push(nd, v);
+          len[v] = len[u] + this.arcLen[a] / this.DM; gain[v] = gain[u] + this.arcGain[a] / this.CM;
+        }
+      }
+    }
+    return { src, dist, prev, len, gain, done, reverse };
+  }
+
+  /* Corners a loop may turn at: real intersections, where at least three
+   * ways meet and at least one is a street (not only footways, service
+   * lanes or steps), so a loop never turns around at the end of a
+   * parking-lot lane. Cached per mode. */
+  corners(mode) {
+    this._corners = this._corners || {};
+    if (this._corners[mode]) return this._corners[mode];
+    const STREETS = new Set(["trunk", "primary", "secondary", "tertiary", "residential", "unclassified",
+      "living_street", "pedestrian", "cycleway", "path"]);
+    const street = this.meta.classes.map((c) => STREETS.has(c));
+    const bit = this.modeBit(mode), { indptr, arcs, tail } = this.reverse();
+    const ok = new Uint8Array(this.n), seen = new Int32Array(this.n).fill(-1);
+    for (let u = 0; u < this.n; u++) {
+      let deg = 0, onStreet = false;
+      const touch = (v, a) => {
+        if ((this.arcFlags[a] & bit) === 0) return;
+        if (street[this.arcCls[a]]) onStreet = true;
+        if (seen[v] !== u) { seen[v] = u; deg++; }
+      };
+      for (let a = this.indptr[u]; a < this.indptr[u + 1]; a++) touch(this.head[a], a);
+      for (let k = indptr[u]; k < indptr[u + 1]; k++) touch(tail[arcs[k]], arcs[k]);
+      ok[u] = deg >= 3 && onStreet ? 1 : 0;
+    }
+    this._corners[mode] = ok;
+    return ok;
+  }
+
+  /* arcs from the tree's root to v (forward tree) or from v to the root
+   * (reverse tree) */
+  treePath(t, v) {
+    const tail = this.reverse().tail, arcs = [];
+    if (!t.done[v]) return null;
+    if (!t.reverse) {
+      for (let guard = 0; v !== t.src; guard++) {
+        const a = t.prev[v]; if (a < 0 || guard > this.n) return null;
+        arcs.push(a); v = tail[a];
+      }
+      return arcs.reverse();
+    }
+    for (let guard = 0; v !== t.src; guard++) {
+      const a = t.prev[v]; if (a < 0 || guard > this.n) return null;
+      arcs.push(a); v = this.head[a];
+    }
+    return arcs;
+  }
+
+  /* Flat loops: routes that start and end at src and run about targetM
+   * metres, as flat as the streets around src allow.
+   *
+   * A loop is built from turnaround corners. One search outward and one
+   * inward from src give every corner's flattest way out and way back.
+   * The corners around src are split into sectors by bearing; in each,
+   * the corner that looks cheapest to reach and return from is tried as a
+   * petal (out to it, home by a different way: the streets used on the way
+   * out cost penK times more on the way back), pairs of corners about a
+   * sixth of a turn apart as triangles (out, across, home), and for loops
+   * over five miles, three corners a quarter turn apart.
+   * A loop whose length misses the target by more than a tolerance is
+   * retried once with a corner scaled nearer or farther. Loops that
+   * repeat too much of themselves (an out-and-back) are dropped; the rest
+   * are ranked by climbing, length breaking ties.
+   *
+   * Like pareto(), it returns a search object; step(budgetMs) until done.
+   * Results: search.loops (best first, mutually distinct) and
+   * search.accepted (every loop that met the length and overlap tests). */
+  loops(src, mode, { targetM, alpha = 30, stress = false, sectors = 18, tol = 0.12,
+    maxOverlap = 0.3, penK = 3, keep = 3, nearM = 110, perArc = 8, minRound = 0.2 } = {}) {
+    const g = this, T = targetM, L = g.lengths(stress);
+    // a few metres per arc keeps routes off zigzags through tiny segments
+    const cost = new Float64Array(g.m);
+    for (let a = 0; a < g.m; a++) cost[a] = L[a] / g.DM + alpha * g.arcGain[a] / g.CM + perArc;
+    const search = { loops: [], accepted: [], all: [], tried: 0, done: false, ms: 0, shortfall: false };
+    const t0 = performance.now();
+    let F = null, B = null, bySector = null;
+    const jobs = [];
+    const cosLat = Math.cos(g.nodeLat(src) * Math.PI / 180);
+    const sectorOf = (v) => {
+      const dx = (g.nodeLon(v) - g.nodeLon(src)) * cosLat, dy = g.nodeLat(v) - g.nodeLat(src);
+      return Math.floor(((Math.atan2(dy, dx) + Math.PI) / (2 * Math.PI)) * sectors) % sectors;
+    };
+    // the corner in a sector whose way out is about `want` metres and whose
+    // estimated loop (flattest out + flattest back) climbs least
+    const pick = (s, want, spread, withBack) => {
+      let best = -1, bestScore = Infinity;
+      for (const v of bySector[s]) {
+        const lf = F.len[v];
+        if (Math.abs(lf - want) > spread) continue;
+        const score = F.gain[v] + (withBack ? B.gain[v] : 0) + 0.002 * Math.abs(lf - want);
+        if (score < bestScore) { bestScore = score; best = v; }
+      }
+      return best;
+    };
+    const leg = (from, to, pen, penNode) => {
+      const t = g.tree(from, mode, cost, { target: to, pen, penNode, penK });
+      return t.done[to] ? g.treePath(t, to) : null;
+    };
+    const mark = (pen, arcs) => { for (const a of arcs) pen[g.arcEdge[a]] = 1; };
+    // corners within nearM of the streets already used, except around the
+    // start, which every leg has to pass through: the way home avoids them,
+    // so a loop is not the same street out and the next street back
+    const XM = 111320 * Math.cos(g.nodeLat(src) * Math.PI / 180), YM = 110540;
+    const px = (v) => g.nodeLon(v) * XM, py = (v) => g.nodeLat(v) * YM;
+    const sx = px(src), sy = py(src);
+    const markNear = (penNode, arcs) => {
+      const cell = nearM, grid = new Map();
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const a of arcs) {
+        const v = g.head[a], x = px(v), y = py(v);
+        const k = Math.floor(x / cell) + ":" + Math.floor(y / cell);
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k).push(x, y);
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+      const r2 = nearM * nearM, home2 = (1.5 * nearM) ** 2;
+      for (let v = 0; v < g.n; v++) {
+        if (!F.done[v]) continue;
+        const x = px(v), y = py(v);
+        if (x < x0 - nearM || x > x1 + nearM || y < y0 - nearM || y > y1 + nearM) continue;
+        if ((x - sx) ** 2 + (y - sy) ** 2 < home2) continue;
+        const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
+        let hit = false;
+        for (let i = -1; i <= 1 && !hit; i++) for (let j = -1; j <= 1 && !hit; j++) {
+          const pts = grid.get((cx + i) + ":" + (cy + j)); if (!pts) continue;
+          for (let k = 0; k < pts.length; k += 2) if ((pts[k] - x) ** 2 + (pts[k + 1] - y) ** 2 < r2) { hit = true; break; }
+        }
+        if (hit) penNode[v] = 1;
+      }
+    };
+    const measure = (arcs) => {
+      let len = 0, gain = 0, rep = 0;
+      const seen = new Map();
+      for (const a of arcs) {
+        const l = g.arcLen[a] / g.DM, e = g.arcEdge[a];
+        len += l; gain += g.arcGain[a] / g.CM;
+        if (seen.has(e)) rep += l; else seen.set(e, 1);
+      }
+      let area = 0, prevX = sx, prevY = sy;
+      for (const a of arcs) { const x = px(g.head[a]) - sx, y = py(g.head[a]) - sy; area += (prevX - sx) * y - x * (prevY - sy); prevX = x + sx; prevY = y + sy; }
+      const round = len > 0 ? 4 * Math.PI * Math.abs(area / 2) / (len * len) : 0;
+      return { len, gain, overlap: len > 0 ? rep / len : 1, round };
+    };
+    const consider = (arcs, kind) => {
+      if (!arcs || !arcs.length) return null;
+      search.tried++;
+      const m = measure(arcs);
+      const r = { arcs, length: m.len, gain: m.gain, overlap: m.overlap, round: m.round, kind };
+      const shaped = m.overlap <= maxOverlap && m.round >= minRound;
+      if (shaped) search.all.push(r);
+      if (shaped && Math.abs(m.len - T) <= tol * T) search.accepted.push(r);
+      return r;
+    };
+    const petal = (s, want, retry) => {
+      const w = pick(s, want, Math.max(150, 0.06 * T), true);
+      if (w < 0) return;
+      const out = g.treePath(F, w); if (!out) return;
+      const pen = new Uint8Array(g.meta.n_edges), penNode = new Uint8Array(g.n);
+      mark(pen, out); markNear(penNode, out);
+      const back = leg(w, src, pen, penNode); if (!back) return;
+      const r = consider(out.concat(back), "petal");
+      if (r && retry && Math.abs(r.length - T) > tol * T) {
+        jobs.push(() => petal(s, want * T / r.length, false));
+      }
+    };
+    // out to the first corner, across each next one, then home; every leg
+    // avoids the streets the loop has already used
+    const polygon = (ss, want, retry) => {
+      const sp = Math.max(150, 0.06 * T);
+      const vs = ss.map((s, i) => pick(s, want, sp, i === ss.length - 1));
+      if (vs.some((v) => v < 0) || new Set(vs).size < vs.length) return;
+      const pen = new Uint8Array(g.meta.n_edges), penNode = new Uint8Array(g.n);
+      let arcs = g.treePath(F, vs[0]); if (!arcs) return;
+      mark(pen, arcs); markNear(penNode, arcs);
+      for (const [from, to] of vs.slice(1).map((v, i) => [vs[i], v]).concat([[vs[vs.length - 1], src]])) {
+        const l = leg(from, to, pen, penNode); if (!l) return;
+        mark(pen, l); markNear(penNode, l); arcs = arcs.concat(l);
+      }
+      const r = consider(arcs, vs.length === 2 ? "triangle" : "polygon");
+      if (r && retry && Math.abs(r.length - T) > tol * T) {
+        jobs.push(() => polygon(ss, want * T / r.length, false));
+      }
+    };
+    search.step = (budgetMs = 30) => {
+      const start = performance.now();
+      if (!F) {
+        F = g.tree(src, mode, cost);
+        B = g.tree(src, mode, cost, { reverse: true });
+        bySector = Array.from({ length: sectors }, () => []);
+        const corner = g.corners(mode);
+        for (let v = 0; v < g.n; v++) {
+          if (!F.done[v] || !B.done[v] || v === src || !corner[v]) continue;
+          const lf = F.len[v];
+          if (lf < 0.1 * T || lf > 0.7 * T) continue;
+          bySector[sectorOf(v)].push(v);
+        }
+        for (let s = 0; s < sectors; s++) jobs.push(() => petal(s, 0.42 * T, true));
+        const gap = Math.max(1, Math.round(sectors / 6));
+        for (let s = 0; s < sectors; s++) jobs.push(() => polygon([s, (s + gap) % sectors], 0.3 * T, true));
+        // longer loops: three corners a quarter turn apart, which keeps the
+        // loop inside the city where two far corners would fall in the bay
+        if (T > 8000) {
+          const q = Math.max(1, Math.round(sectors / 4));
+          for (let s = 0; s < sectors; s += 2) jobs.push(() => polygon([s, (s + q) % sectors, (s + 2 * q) % sectors], 0.21 * T, true));
+        }
+        if (performance.now() - start > budgetMs) return false;
+      }
+      while (jobs.length) {
+        jobs.shift()();
+        if (performance.now() - start > budgetMs) return false;
+      }
+      // rank, then keep loops that are not near-copies of a better one. When
+      // nothing came close enough to the target (a long loop from the edge
+      // of the city), offer the loop that came closest, and say so.
+      let pool = search.accepted.slice();
+      if (!pool.length && search.all.length) {
+        const closest = search.all.slice().sort((x, y) => Math.abs(x.length - T) - Math.abs(y.length - T))[0];
+        pool = [closest]; search.shortfall = true;
+      }
+      pool.sort((x, y) => (x.gain - y.gain) || (Math.abs(x.length - T) - Math.abs(y.length - T)));
+      const edges = (r) => new Set(r.arcs.map((a) => g.arcEdge[a]));
+      const picked = [];
+      for (const r of pool) {
+        const er = edges(r);
+        const similar = picked.some((p) => {
+          let both = 0; for (const e of er) if (p.edges.has(e)) both++;
+          return both / Math.min(er.size, p.edges.size) > 0.6;
+        });
+        if (!similar) picked.push({ r, edges: er });
+        if (picked.length >= keep) break;
+      }
+      search.loops = picked.map((p) => p.r);
+      const gains = search.accepted.map((r) => r.gain).sort((x, y) => x - y);
+      search.medianGain = gains.length ? gains[Math.floor(gains.length / 2)] : NaN;
+      search.ms = performance.now() - t0;
+      search.done = true;
+      return true;
+    };
+    return search;
+  }
+
   /* Reverse adjacency (arcs grouped by head node), built on first use. */
   reverse() {
     if (this._rev) return this._rev;
@@ -745,6 +1018,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   const EPS_NODE_CM = 10;
   /* at most this many routes on the slider, spread evenly along the frontier */
   const MAX_ROUTES = 30;
+  /* loop mode: the slider is the loop's length, in miles */
+  const LOOP_MIN_MI = 1, LOOP_MAX_MI = 15, LOOP_STEP_MI = 0.5, LOOP_DEFAULT_MI = 4;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -994,7 +1269,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
 
   /* -------------------------------------------------------------- the app */
   const App = {
-    state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true },
+    state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
+      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -1064,7 +1340,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.labelLayer = L.layerGroup().addTo(map);
 
       map.on("click", (e) => {
-        const which = !this.state.from ? "from" : (!this.state.to ? "to" : this.state.focus);
+        const which = this.state.loop ? "from"
+          : (!this.state.from ? "from" : (!this.state.to ? "to" : this.state.focus));
         this.setPoint(which, this.pointAt(e.latlng.lng, e.latlng.lat), true);
         this.recompute("auto");
       });
@@ -1094,7 +1371,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       input.dataset.set = pt ? "1" : "";
       this.hideSuggest(which);
       this.drawMarkers();
-      if (typed && !this.state[which === "from" ? "to" : "from"]) {
+      if (typed && !this.state.loop && !this.state[which === "from" ? "to" : "from"]) {
         $(which === "from" ? "to" : "from").focus();
       }
     },
@@ -1103,6 +1380,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.markers.clearLayers();
       for (const which of ["from", "to"]) {
         const p = this.state[which]; if (!p) continue;
+        if (which === "to" && this.state.loop) continue;
         const m = L.marker([p.lat, p.lon], {
           draggable: true, keyboard: false, title: which === "from" ? "Start" : "Destination",
           icon: L.divIcon({ className: "pin-icon " + which, iconSize: [18, 18], iconAnchor: [9, 9] }),
@@ -1166,7 +1444,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this["hide_" + which] = () => { items = []; render(); };
       }
 
+      $("loopbtn").addEventListener("click", () => this.setLoop(!this.state.loop, true));
       $("swap").addEventListener("click", () => {
+        if (this.state.loop) return;
         const a = this.state.from, b = this.state.to;
         this.setPoint("from", b, false); this.setPoint("to", a, false);
         this.recompute("auto");
@@ -1190,7 +1470,20 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.recompute(false);
       });
       const sl = $("sl");
-      sl.addEventListener("input", () => { this.state.t = +sl.value; this.show(); this.writeHash(); });
+      sl.addEventListener("input", () => {
+        if (!this.state.loop) { this.state.t = +sl.value; this.show(); this.writeHash(); return; }
+        // loop length: the label follows the thumb; the search runs once the
+        // thumb settles, so dragging across the range does not queue searches
+        this.state.loopMi = +sl.value;
+        $("slpos").textContent = fmtLoop(this.state.loopMi);
+        clearTimeout(this._loopTimer);
+        this._loopTimer = setTimeout(() => this.recompute("auto"), 350);
+      });
+      sl.addEventListener("change", () => {
+        if (!this.state.loop) return;
+        clearTimeout(this._loopTimer);
+        this.recompute("auto");
+      });
       $("share").addEventListener("click", () => {
         const url = this.shareUrl(), box = $("sharebox"), btn = $("share");
         const done = () => { btn.textContent = "Link copied"; setTimeout(() => { btn.textContent = "Copy link"; }, 1800); };
@@ -1216,7 +1509,84 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         use_class_multiplier: false, stress: this.calm() };
     },
 
+    /* Loop mode on or off. The To field folds away (its place is kept, so
+     * turning the loop off brings the destination back) and the slider
+     * becomes the loop's length. */
+    setLoop(on, recompute) {
+      if (this.state.loop === on) return;
+      this.state.loop = on;
+      $("card").classList.toggle("looping", on);
+      const btn = $("loopbtn"), sl = $("sl");
+      const label = on ? "Go from A to B" : "Make it a loop";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = label; btn.setAttribute("aria-label", label);
+      if (on) {
+        this.state.savedTo = this.state.to; this.state.to = null;
+        sl.min = LOOP_MIN_MI; sl.max = LOOP_MAX_MI; sl.step = LOOP_STEP_MI; sl.value = this.state.loopMi;
+        sl.setAttribute("aria-label", "Loop length in miles");
+        $("end0").textContent = LOOP_MIN_MI + " mi"; $("end1").textContent = LOOP_MAX_MI + " mi";
+        $("slpos").textContent = fmtLoop(this.state.loopMi);
+        $("to").tabIndex = -1;
+      } else {
+        this.state.to = this.state.savedTo; this.state.savedTo = null;
+        sl.min = 0; sl.max = 1; sl.step = 0.001; sl.value = this.state.t;
+        sl.setAttribute("aria-label", "From shortest to flattest");
+        $("end0").textContent = "Shortest"; $("end1").textContent = "Flattest";
+        $("slpos").textContent = "";
+        $("to").tabIndex = 0;
+        if (this.state.to) this.state.to = Object.assign({}, this.state.to, { node: this.nearestNode(this.state.to.lon, this.state.to.lat) });
+      }
+      $("to").value = this.state.to ? this.state.to.label : "";
+      $("to").dataset.set = this.state.to ? "1" : "";
+      this.drawMarkers();
+      if (recompute) this.recompute("auto");
+    },
+
+    /* the flattest loops of about the chosen length from the start */
+    recomputeLoop(fit) {
+      const { from, mode, loopMi } = this.state;
+      this.family = null;
+      const gen = ++this._gen;
+      $("sl").disabled = false;
+      if (!from) {
+        this.clearRoute();
+        $("status").textContent = "Where do you start? Type a place or click the map.";
+        return;
+      }
+      const g = this.graph;
+      $("status").textContent = "Finding the flattest " + fmtLoop(loopMi) + "…";
+      $("slpos").textContent = fmtLoop(loopMi);
+      const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm() });
+      const run = () => {
+        if (gen !== this._gen) return;
+        if (!search.step(30)) { setTimeout(run, 0); return; }
+        if (!search.loops.length) {
+          this.clearRoute();
+          $("status").textContent = "No loop from here. Try another start.";
+          return;
+        }
+        const members = search.loops.map((r) => this.member(r.arcs));
+        members.forEach((m, i) => { m.id = i; });
+        this.family = { unique: members, shortest: members[0], partial: false, loop: true,
+          targetM: loopMi * MI, medianGain: search.medianGain, tried: search.accepted.length,
+          shortfall: search.shortfall };
+        this.state.loopIdx = Math.min(this._pendingLoopIdx || 0, members.length - 1);
+        this._pendingLoopIdx = 0;
+        this.shown = null;
+        $("status").textContent = search.shortfall
+          ? "No " + fmtLoop(loopMi) + " fits here; this is the closest."
+          : "The flattest of " + search.accepted.length + " loops tried.";
+        this.drawFamily();
+        this.show(true);
+        if (fit === true || (fit === "auto" && !this.inView())) this.fit();
+        this.writeHash();
+        $("share").hidden = false; $("sharebox").hidden = true;
+      };
+      setTimeout(run, 0);
+    },
+
     recompute(fit) {
+      if (this.state.loop) return this.recomputeLoop(fit);
       const { from, to, mode } = this.state;
       this.family = null;
       const gen = ++this._gen;
@@ -1329,10 +1699,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     /* show the family member for the current slider position */
     show(immediate) {
       if (!this.family) return;
-      const t = this.state.t, step = this.stepAt(t), n = this.family.unique.length;
+      const loop = !!this.family.loop;
+      const t = this.state.t, n = this.family.unique.length;
+      const step = loop ? clamp(this.state.loopIdx, 0, n - 1) : this.stepAt(t);
       const u = this.family.unique[step];
-      const colour = ramp(t);
-      $("slpos").textContent = this.family.partial ? "" : (n === 1 ? "" : (step + 1) + " of " + n);
+      const colour = loop ? css("--route") : ramp(t);
+      $("slpos").textContent = loop ? fmtLoop(this.state.loopMi)
+        : (this.family.partial ? "" : (n === 1 ? "" : (step + 1) + " of " + n));
       const prev = this.shown;
       if (prev === u) { this.tintRoute(colour); return; }
       this.shown = u;
@@ -1459,6 +1832,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         $("v_climb").innerHTML = fmtFt(lerp(p.elev_gain_m, s.elev_gain_m, k));
         $("v_grade").innerHTML = fmtPct(lerp(p.max_grade, s.max_grade, k));
       });
+      if (this.family.loop) { this.drawLoopDelta(u); return; }
       const sh = this.family.shortest.stats;
       if (u === this.family.shortest) {
         $("delta").innerHTML = this.family.unique.length > 1
@@ -1474,6 +1848,31 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         const less = dc <= 0 ? "no less climbing"
           : "<b class='down'>−" + Math.round(dc * FT).toLocaleString() + " ft</b> of climbing (" + pc + "% less)";
         $("delta").innerHTML = "vs. shortest: " + longer + ", " + less;
+      }
+    },
+
+    /* under the stats: how this loop compares with a typical loop of the
+     * same length from the same start, and a way to see the next-best one */
+    drawLoopDelta(u) {
+      const f = this.family, s = u.stats, box = $("delta");
+      const med = f.medianGain, idx = f.unique.indexOf(u), n = f.unique.length;
+      let html;
+      if (f.shortfall) html = "The longest loop that fits from here.";
+      else if (Number.isFinite(med) && med - s.elev_gain_m >= 3 && f.tried >= 5) {
+        html = "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
+          + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
+      } else html = "About as flat as loops from here get.";
+      box.innerHTML = html;
+      if (n > 1) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "link"; b.id = "nextloop";
+        b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
+        b.addEventListener("click", () => {
+          this.state.loopIdx = (idx + 1) % n;
+          this.show(false);
+          this.writeHash();
+        });
+        box.append(" ", b);
       }
     },
 
@@ -1503,7 +1902,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const dist = lerp(a.stats.distance_m, b.stats.distance_m, k);
       // a fixed vertical scale across the family keeps the hills comparable
       let zmin = Infinity, zmax = -Infinity;
-      for (const u of this.family.unique) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+      // (between a loop search starting and finishing there is no family yet)
+      for (const u of (this.family ? this.family.unique : [a, b])) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
       const padL = 6, padR = 6, top = 8, bottom = 18;
@@ -1566,12 +1966,14 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     token() {
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
+      const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
+      if (this.state.loop) return ["l", c(from), m, String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
       return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
     writeHash() {
       const { from, to } = this.state;
-      if (!from || !to) return;
+      if (!from || (!to && !this.state.loop)) return;
       try { history.replaceState(null, "", "#" + this.token()); } catch (e) { /* sandboxed */ }
     },
     shareUrl() {
@@ -1584,6 +1986,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       try { h = location.hash; } catch (e) { return false; }
       if (!h || h.length < 2) return false;
       const parts = h.slice(1).split("~");
+      if (parts[0] === "l" && parts.length >= 6) return this.readLoopHash(parts);
       if (parts[0] !== "t" || parts.length < 8) return false;
       const nums = parts.slice(1, 5).map(Number);
       if (nums.some((v) => !Number.isFinite(v))) return false;
@@ -1600,7 +2003,28 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.setPoint("to", this.pointAt(nums[2], nums[3], decLabel(parts[8] || "") || undefined), false);
       return true;
     },
+    /* #l~lon~lat~mode~miles~which~label */
+    readLoopHash(parts) {
+      const lon = +parts[1], lat = +parts[2], mi = +parts[4];
+      if (![lon, lat, mi].every(Number.isFinite)) return false;
+      this.setMode(parts[3]);
+      this.state.loopMi = clamp(Math.round(mi / LOOP_STEP_MI) * LOOP_STEP_MI, LOOP_MIN_MI, LOOP_MAX_MI);
+      this.setPoint("from", this.pointAt(lon, lat, decLabel(parts[6] || "") || undefined), false);
+      this.setLoop(true, false);
+      this._pendingLoopIdx = Math.max(0, parseInt(parts[5], 10) || 0);
+      return true;
+    },
+    setMode(tok) {
+      if (tok !== "b" && tok !== "bx") return;
+      this.state.mode = "bike";
+      this.state.calm = tok === "b";
+      $("calm").checked = this.state.calm;
+      $("calmrow").hidden = false;
+      for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.v === "bike" ? "true" : "false");
+    },
   };
+
+  function fmtLoop(mi) { return (Number.isInteger(mi) ? mi : mi.toFixed(1)) + " mi loop"; }
 
   function encLabel(s) {
     let out = "";

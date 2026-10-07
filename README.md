@@ -48,6 +48,18 @@ flattest; on twenty everyday trips across the city it adds about 7% to
 the distance ridden and takes the share on bare arterials from 29% to 1%.
 Untick it and the shortest end is the genuine shortest path.
 
+The **loop button** next to swap turns the trip into a run or ride that
+starts and ends in the same place. The slider becomes the loop's length
+(1 to 15 miles), and the page tries dozens of loops of about that length
+in every direction: out to one, two or three turning points (always a
+real intersection) and home by other streets, avoiding any street within
+a block of the way out. Loops that double back on themselves or are too
+thin to be a loop are dropped, and the flattest of the rest is shown,
+with how much less it climbs than a typical loop of the same length from
+the same start. The search takes well under a second; up to about 20
+miles it finds a loop from anywhere in the city, beyond that the city
+runs out.
+
 ![The route finder](outputs/screenshot_route_finder.png)
 
 Place search is **offline**: street intersections ("24th & Mission"),
