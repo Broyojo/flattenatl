@@ -45,6 +45,7 @@
   // while loops are being tried the profile morphs from one candidate to
   // the next; each morph takes this long, and text changes crossfade
   const SCAN_MORPH_MS = 420, FADE_MS = 160, GROW_MS = 200;
+  const PROF_PAD = 6;                        // the profile's side padding, px
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -329,7 +330,7 @@
     buildMap() {
       const map = L.map("map", {
         zoomControl: false, attributionControl: true, preferCanvas: true,
-        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.25,
+        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.25, zoomAnimationThreshold: 8,
       });
       map.attributionControl.setPrefix("");
       map.attributionControl.addAttribution(
@@ -358,12 +359,32 @@
         map.getContainer().classList.toggle("z-high", z >= 15.5);
       };
       map.on("zoomend", zoomClass); zoomClass();
+      // street names are placed from screen positions, so they come off
+      // while the map glides to a new zoom and are placed afresh after
+      map.on("zoomstart", () => this.labelLayer.clearLayers());
       map.on("zoomend", () => { if (this._labelled) this.labelRoute(this._labelled); });
 
       this.familyLayer = L.layerGroup().addTo(map);
       this.routeLayer = L.layerGroup().addTo(map);
       this.markers = L.layerGroup().addTo(map);
       this.labelLayer = L.layerGroup().addTo(map);
+      this.hoverLayer = L.layerGroup().addTo(map);
+      // the route on show and the hover dot are SVG, not canvas: they fade
+      // and move during zoom glides, and Safari has been seen to leave the
+      // canvas blank after one; the faint family lines stay on the canvas
+      this.svg = L.svg({ padding: 0.5 });
+
+      // a pointer over the profile (or a finger dragged across it) marks
+      // that point of the route on both the graph and the map
+      const cv = $("prof");
+      const at = (e) => {
+        const r = cv.getBoundingClientRect();
+        this.setHover(clamp((e.clientX - r.left - PROF_PAD) / (r.width - 2 * PROF_PAD), 0, 1));
+      };
+      cv.addEventListener("pointermove", at);
+      cv.addEventListener("pointerdown", (e) => { at(e); try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine */ } });
+      cv.addEventListener("pointerleave", () => this.setHover(null));
+      for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerType !== "mouse") this.setHover(null); });
 
       map.on("click", (e) => {
         const which = this.state.loop ? "from"
@@ -641,6 +662,7 @@
      * stats following, so the search reads as the shape of the run being
      * worked out rather than a wait.  What was shown before fades out. */
     scanStart(from, targetM) {
+      this.setHover(null); this._loopNext = null;
       const fl = this.familyLayer, rl = this.routeLayer, old = [];
       fl.eachLayer((l) => old.push(l)); rl.eachLayer((l) => old.push(l));
       if (old.length) fadeOut(old, 260, () => old.forEach((l) => { fl.removeLayer(l); rl.removeLayer(l); }));
@@ -772,6 +794,7 @@
     },
 
     clearRoute() {
+      this.setHover(null); this._loopNext = null;
       this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
       $("turns").hidden = true;
       this.shown = null; this._handoff = null; this._profCur = null;
@@ -813,6 +836,7 @@
       this.drawRoute(u, colour, prev && !immediate ? prev : null, !!hand);
       this.drawStats(u, from || u);
       this.animateProfile(from || u, u, 300, hand ? { range: { from: hand.range, to: rangeOf(this.family.unique) } } : {});
+      this.placeHoverDot();
     },
 
     tintRoute(colour) {
@@ -832,9 +856,9 @@
       }
       fade = fade || !!prev;
       this._casing = L.polyline(u.latlngs, { color: casing, weight: 10, opacity: fade ? 0 : 0.9, interactive: false,
-        lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
+        lineJoin: "round", lineCap: "round", renderer: this.svg }).addTo(this.routeLayer);
       this._line = L.polyline(u.latlngs, { color: colour, weight: 5, opacity: fade ? 0 : 1, interactive: false,
-        lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
+        lineJoin: "round", lineCap: "round", renderer: this.svg }).addTo(this.routeLayer);
       if (fade) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
       this._casing.bringToFront(); this._line.bringToFront();
       $("prof").dataset.colour = colour;
@@ -972,10 +996,23 @@
           b.type = "button"; b.className = "link"; b.id = "nextloop";
           b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
           b.addEventListener("click", () => {
-            this.state.loopIdx = (idx + 1) % n;
-            this.show(false);
-            if (!this.inView() || this.viewShare() < 0.35) this.fit();
-            this.writeHash();
+            // taps in quick succession each advance one more: the target
+            // is counted from the last one asked for, not the one on show
+            const cur = this._loopNext !== undefined && this._loopNext !== null ? this._loopNext : this.state.loopIdx;
+            const next = (cur + 1) % n, nu = f.unique[next];
+            this._loopNext = next;
+            const go = () => { if (this.family !== f) return; this._loopNext = null; this.state.loopIdx = next; this.show(false); this.writeHash(); };
+            if (this.inView(nu) && this.viewShare(nu) >= 0.35) { go(); return; }
+            // the next loop needs a new view: the loop on show fades off,
+            // the map glides to the next one, and that fades on (the same
+            // order as a new search), rather than moving mid-crossfade
+            const old = [this._casing, this._line].filter(Boolean);
+            this._casing = null; this._line = null;
+            this.labelLayer.clearLayers(); this._labelled = null;
+            this.setHover(null);
+            if (old.length) fadeOut(old, 200, () => old.forEach((l) => this.routeLayer.removeLayer(l)));
+            clearTimeout(this._loopTap);
+            this._loopTap = setTimeout(() => { if (this.family !== f || this._loopNext !== next) return; this.fit(nu); go(); }, old.length && !reducedMotion() ? 220 : 0);
           });
           el.append(" ", b);
         }
@@ -983,6 +1020,25 @@
     },
 
     /* ------------------------------------------------------------ profile */
+    /* the point a fraction of the way along the route on show, marked on
+     * the map and on the graph; null clears it */
+    setHover(f) {
+      if (f !== null && (!this.shown || this._scan)) f = null;
+      this._hover = f;
+      if (f === null) { this.hoverLayer.clearLayers(); this._hoverDot = null; }
+      else this.placeHoverDot();
+      if (!this._profAnim && this.shown) this.drawProfile(this.shown, this.shown, 1);
+    },
+    placeHoverDot() {
+      if (this._hover === null || this._hover === undefined || !this.shown) return;
+      const ll = alongRoute(this.shown, this._hover);
+      const fill = $("prof").dataset.colour || css("--route");
+      if (!this._hoverDot) {
+        this._hoverDot = L.circleMarker(ll, { radius: 6, color: "#fff", weight: 2.5, fillColor: fill, fillOpacity: 1,
+          interactive: false, renderer: this.svg }).addTo(this.hoverLayer);
+      } else { this._hoverDot.setLatLng(ll); this._hoverDot.setStyle({ fillColor: fill }); }
+    },
+
     /* morph the profile from a to b; opts.range eases the vertical scale
      * between two {min, max} ranges, opts.stats carries the numbers along,
      * opts.done runs when the morph completes (not when it is cut short) */
@@ -1028,7 +1084,7 @@
         steepest: lerp(a.stats.steepest, b.stats.steepest, k) } };
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
-      const padL = 6, padR = 6, top = 8, bottom = 18;
+      const padL = PROF_PAD, padR = PROF_PAD, top = 8, bottom = 18;
       const X = (i) => padL + (W - padL - padR) * i / (n - 1);
       const Y = (v) => top + (H - top - bottom) * (1 - (v - zmin) / (zmax - zmin));
       const colour = cv.dataset.colour || css("--route");
@@ -1048,27 +1104,45 @@
       ctx.textAlign = "left"; ctx.fillText(lab(z[0]), padL, H - 5);
       ctx.textAlign = "right"; ctx.fillText(lab(z[n - 1]), W - padR, H - 5);
       ctx.textAlign = "center"; ctx.fillText((dist / MI).toFixed(1) + " mi", W / 2, H - 5);
-      if (hi > n * 0.06 && hi < n * 0.94 && z[hi] - Math.min(z[0], z[n - 1]) > 6) {
+      const hov = this._hover !== null && this._hover !== undefined && !this._scan && k >= 1 ? this._hover : null;
+      if (hov === null && hi > n * 0.06 && hi < n * 0.94 && z[hi] - Math.min(z[0], z[n - 1]) > 6) {
         ctx.textAlign = X(hi) < 40 ? "left" : X(hi) > W - 40 ? "right" : "center";
         ctx.fillStyle = css("--ink");
         ctx.fillText(lab(z[hi]), X(hi), Math.max(10, Y(z[hi]) - 5));
+      }
+      // the hovered point: a guide line, a dot, and its distance and height
+      if (hov !== null) {
+        const fi = hov * (n - 1), i0 = Math.floor(fi), i1 = Math.min(n - 1, i0 + 1);
+        const zv = lerp(z[i0], z[i1], fi - i0), x = padL + (W - padL - padR) * hov, y = Y(zv);
+        ctx.strokeStyle = css("--muted"); ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, H - bottom); ctx.stroke(); ctx.globalAlpha = 1;
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = colour; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.5; ctx.stroke();
+        const text = (hov * dist / MI).toFixed(1) + " mi · " + lab(zv);
+        ctx.font = "600 10px " + css("--mono");
+        const tw = ctx.measureText(text).width + 10;
+        let tx = x - tw / 2; tx = clamp(tx, padL, W - padR - tw);
+        const ty = y - 10 >= top + 14 ? y - 10 : y + 10;
+        ctx.fillStyle = css("--card"); ctx.globalAlpha = 0.92;
+        ctx.beginPath(); ctx.roundRect(tx, ty - 11, tw, 15, 4); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.fillStyle = css("--ink"); ctx.textAlign = "left"; ctx.fillText(text, tx + 5, ty);
       }
     },
 
     /* what the map is fitted to: the whole frontier between two places
      * (its routes share the ends), but only the loop on show, since the
      * other loops offered can lie in any direction from the start */
-    familyBounds() {
+    familyBounds(u) {
       const b = L.latLngBounds([]);
-      const members = this.family.loop && this.shown ? [this.shown] : this.family.unique;
+      const members = this.family.loop ? [u || this.shown || this.family.unique[0]] : this.family.unique;
       for (const u of members) for (const ll of u.latlngs) b.extend(ll);
       return b;
     },
     /* is the whole family inside the part of the map the card does not cover? */
-    inView() {
+    inView(u) {
       if (!this.family) return true;
       const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
-      const b = this.familyBounds();
+      const b = this.familyBounds(u);
       const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
       const wide = size.x > 640;
       const x0 = wide ? card.right + 16 : 16, y1 = wide ? size.y - 16 : card.top - 16;
@@ -1076,18 +1150,18 @@
     },
     /* how much of the uncovered map the family spans, in its larger
      * direction (1 = edge to edge) */
-    viewShare() {
+    viewShare(u) {
       if (!this.family) return 1;
       const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
-      const b = this.familyBounds();
+      const b = this.familyBounds(u);
       const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
       const wide = size.x > 640;
       const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
       return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
     },
-    fit() {
+    fit(u) {
       if (!this.family) return;
-      const b = this.familyBounds();
+      const b = this.familyBounds(u);
       const size = this.map.getSize();
       const wide = size.x > 640;
       const card = $("card").getBoundingClientRect();
@@ -1095,6 +1169,8 @@
       // that reaches the edge reads as cut off; the zoom control sits
       // bottom right
       const my = Math.max(56, Math.round(size.y * 0.12)), mx = Math.max(64, Math.round(size.x * 0.06));
+      // one short glide every time (the map's zoomAnimationThreshold is
+      // raised so large changes animate too, instead of cutting)
       this.map.fitBounds(b, wide
         ? { paddingTopLeft: [card.right + mx, my], paddingBottomRight: [mx, my + 16], maxZoom: 15 }
         : { paddingTopLeft: [28, Math.max(36, Math.round(size.y * 0.12))], paddingBottomRight: [28, this.cardHeight() + 28], maxZoom: 15 });
@@ -1235,6 +1311,25 @@
     return out.sort((a, b) => a.stats.distance_m - b.stats.distance_m);
   }
 
+  /* the point a fraction f of the way along a route's geometry; the
+   * cumulative length along its points is kept on the route */
+  function alongRoute(u, f) {
+    const pts = u.latlngs;
+    if (!u._cum) {
+      const c = new Float64Array(pts.length);
+      const ky = 110540, kx = 111320 * Math.cos(pts[0][0] * Math.PI / 180);
+      for (let i = 1; i < pts.length; i++) {
+        const dx = (pts[i][1] - pts[i - 1][1]) * kx, dy = (pts[i][0] - pts[i - 1][0]) * ky;
+        c[i] = c[i - 1] + Math.sqrt(dx * dx + dy * dy);
+      }
+      u._cum = c;
+    }
+    const c = u._cum, want = f * c[c.length - 1];
+    let lo = 0, hi = c.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (c[mid] <= want) lo = mid; else hi = mid; }
+    const t = c[hi] > c[lo] ? (want - c[lo]) / (c[hi] - c[lo]) : 0;
+    return L.latLng(lerp(pts[lo][0], pts[hi][0], t), lerp(pts[lo][1], pts[hi][1], t));
+  }
   function resample(prof, n) {
     const { d, z } = prof;
     const out = new Float64Array(n);
