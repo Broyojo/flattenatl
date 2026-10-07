@@ -296,7 +296,7 @@
   /* -------------------------------------------------------------- the app */
   const App = {
     state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
-      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: true },
+      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: false },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -1094,7 +1094,7 @@
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
       const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
-      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "" : "l"), String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
+      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "o" : ""), String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
       return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
@@ -1130,12 +1130,12 @@
       this.setPoint("to", this.pointAt(nums[2], nums[3], decLabel(parts[8] || "") || undefined), false);
       return true;
     },
-    /* #l~lon~lat~mode~miles~which~label (mode ending in l: loops only) */
+    /* #l~lon~lat~mode~miles~which~label (mode ending in o: out-and-back allowed) */
     readLoopHash(parts) {
       const lon = +parts[1], lat = +parts[2], mi = +parts[4];
       if (![lon, lat, mi].every(Number.isFinite)) return false;
       let m = parts[3] || "w";
-      if (m.endsWith("l")) { m = m.slice(0, -1); this.state.outBack = false; $("outback").checked = false; }
+      if (m.endsWith("o")) { m = m.slice(0, -1); this.state.outBack = true; $("outback").checked = true; }
       this.setMode(m);
       this.state.loopMi = clamp(Math.round(mi / LOOP_STEP_MI) * LOOP_STEP_MI, LOOP_MIN_MI, LOOP_MAX_MI);
       this.setPoint("from", this.pointAt(lon, lat, decLabel(parts[6] || "") || undefined), false);
