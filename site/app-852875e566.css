@@ -75,6 +75,7 @@ button:hover{border-color:var(--line)}
 button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 .swap{flex:none;width:36px;height:36px;padding:0;font-size:16px;line-height:1}
 .swap{transition:opacity .2s ease,width .3s ease,margin .3s ease}
+.swap .ic-swap{width:20px;height:20px;display:block;margin:auto}
 .loopbtn{position:relative}
 .loopbtn .ic{position:absolute;inset:0;margin:auto;width:20px;height:20px;transition:opacity .25s ease,transform .3s ease}
 .loopbtn .ic circle.a{fill:var(--route)}

@@ -747,6 +747,7 @@ button:hover{border-color:var(--line)}
 button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
 .swap{flex:none;width:36px;height:36px;padding:0;font-size:16px;line-height:1}
 .swap{transition:opacity .2s ease,width .3s ease,margin .3s ease}
+.swap .ic-swap{width:20px;height:20px;display:block;margin:auto}
 .loopbtn{position:relative}
 .loopbtn .ic{position:absolute;inset:0;margin:auto;width:20px;height:20px;transition:opacity .25s ease,transform .3s ease}
 .loopbtn .ic circle.a{fill:var(--route)}
@@ -818,7 +819,7 @@ details a{color:var(--accent)}
       <span class="pin" aria-hidden="true"></span>
       <ul class="suggest" id="from_s" role="listbox" hidden></ul>
     </div>
-    <button class="swap" id="swap" title="Swap" aria-label="Swap origin and destination">&#8645;</button>
+    <button class="swap" id="swap" title="Swap" aria-label="Swap origin and destination"><svg class="ic-swap" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 16V4M4.9 6.1L7 4l2.1 2.1M13 4v12M10.9 13.9L13 16l2.1-2.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <button class="swap loopbtn" id="loopbtn" type="button" title="Make it a loop" aria-label="Make it a loop" aria-pressed="false">
       <svg class="ic ic-loop" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5h6a5 5 0 0 1 0 10H7A5 5 0 0 1 7 5z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.3 2.9l2.1 2.1-2.1 2.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle class="a" cx="10" cy="15" r="2.4"/></svg>
       <svg class="ic ic-line" viewBox="0 0 20 20" aria-hidden="true"><line x1="5" y1="15" x2="15" y2="5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle class="a" cx="4.6" cy="15.4" r="2.6"/><circle class="b" cx="15.4" cy="4.6" r="2.6"/></svg>
@@ -1941,6 +1942,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   const MAX_ROUTES = 30;
   /* loop mode: the slider is the loop's length, in miles */
   const LOOP_MIN_MI = 1, LOOP_MAX_MI = 15, LOOP_STEP_MI = 0.5, LOOP_DEFAULT_MI = 4;
+  /* while loops are tried, the map and profile show a new one this often */
+  const SCAN_FRAME_MS = 250;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -2483,7 +2486,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const run = () => {
         if (gen !== this._gen) return;
         if (!search.step(30)) {
-          if (search.last && search.last !== this._scan.last) this.scanShow(search.last);
+          // the scan shows the latest loop at a steady pace (SCAN_FRAME_MS),
+          // not every loop the search builds, which would strobe
+          const now = performance.now();
+          if (search.last && search.last !== this._scan.last && now - this._scan.t >= SCAN_FRAME_MS) {
+            this._scan.t = now;
+            this.scanShow(search.last);
+          }
           $("status").textContent = "Trying loops… " + search.tried;
           setTimeout(run, 0);
           return;
@@ -2526,7 +2535,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this._line = null; this._labelled = null; this.shown = null;
       $("turns").hidden = true;
       $("delta").textContent = "Trying loops of about " + fmtLoop(targetM / MI).replace(" loop", "") + " in every direction…";
-      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity };
+      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity, t: -Infinity };
       // frame the area the loops will cover before they start appearing
       const r = targetM / 5, dLat = r / 110540, dLon = r / (111320 * Math.cos(from.lat * Math.PI / 180));
       const area = L.latLngBounds([from.lat - dLat, from.lon - dLon], [from.lat + dLat, from.lon + dLon]);
@@ -2544,7 +2553,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const line = L.polyline(m.latlngs, { color: css("--route"), weight: 3, opacity: 0.85, interactive: false,
         lineJoin: "round", lineCap: "round" }).addTo(this.scanLayer);
       sc.lines.unshift(line);
-      const fades = [0.85, 0.4, 0.22, 0.12, 0.06];
+      const fades = [0.9, 0.35, 0.15];
       sc.lines.forEach((l, i) => { if (i < fades.length) l.setStyle({ opacity: fades[i], weight: i ? 2 : 3 }); });
       while (sc.lines.length > fades.length) this.scanLayer.removeLayer(sc.lines.pop());
       $("result").hidden = false;
@@ -2554,7 +2563,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       $("prof").dataset.colour = css("--route");
       const from = sc.prev || m;
       sc.prev = m;
-      this.animateProfile(from, m, 140);
+      this.animateProfile(from, m, SCAN_FRAME_MS - 30);
     },
     scanEnd() {
       if (!this._scan) return;

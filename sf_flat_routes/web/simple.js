@@ -41,6 +41,8 @@
   const MAX_ROUTES = 30;
   /* loop mode: the slider is the loop's length, in miles */
   const LOOP_MIN_MI = 1, LOOP_MAX_MI = 15, LOOP_STEP_MI = 0.5, LOOP_DEFAULT_MI = 4;
+  /* while loops are tried, the map and profile show a new one this often */
+  const SCAN_FRAME_MS = 250;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -583,7 +585,13 @@
       const run = () => {
         if (gen !== this._gen) return;
         if (!search.step(30)) {
-          if (search.last && search.last !== this._scan.last) this.scanShow(search.last);
+          // the scan shows the latest loop at a steady pace (SCAN_FRAME_MS),
+          // not every loop the search builds, which would strobe
+          const now = performance.now();
+          if (search.last && search.last !== this._scan.last && now - this._scan.t >= SCAN_FRAME_MS) {
+            this._scan.t = now;
+            this.scanShow(search.last);
+          }
           $("status").textContent = "Trying loops… " + search.tried;
           setTimeout(run, 0);
           return;
@@ -626,7 +634,7 @@
       this._line = null; this._labelled = null; this.shown = null;
       $("turns").hidden = true;
       $("delta").textContent = "Trying loops of about " + fmtLoop(targetM / MI).replace(" loop", "") + " in every direction…";
-      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity };
+      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity, t: -Infinity };
       // frame the area the loops will cover before they start appearing
       const r = targetM / 5, dLat = r / 110540, dLon = r / (111320 * Math.cos(from.lat * Math.PI / 180));
       const area = L.latLngBounds([from.lat - dLat, from.lon - dLon], [from.lat + dLat, from.lon + dLon]);
@@ -644,7 +652,7 @@
       const line = L.polyline(m.latlngs, { color: css("--route"), weight: 3, opacity: 0.85, interactive: false,
         lineJoin: "round", lineCap: "round" }).addTo(this.scanLayer);
       sc.lines.unshift(line);
-      const fades = [0.85, 0.4, 0.22, 0.12, 0.06];
+      const fades = [0.9, 0.35, 0.15];
       sc.lines.forEach((l, i) => { if (i < fades.length) l.setStyle({ opacity: fades[i], weight: i ? 2 : 3 }); });
       while (sc.lines.length > fades.length) this.scanLayer.removeLayer(sc.lines.pop());
       $("result").hidden = false;
@@ -654,7 +662,7 @@
       $("prof").dataset.colour = css("--route");
       const from = sc.prev || m;
       sc.prev = m;
-      this.animateProfile(from, m, 140);
+      this.animateProfile(from, m, SCAN_FRAME_MS - 30);
     },
     scanEnd() {
       if (!this._scan) return;
