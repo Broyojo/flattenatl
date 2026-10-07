@@ -1383,6 +1383,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         map.getContainer().classList.toggle("z-high", z >= 15.5);
       };
       map.on("zoomend", zoomClass); zoomClass();
+      // street names are placed from screen positions, so they come off
+      // while the map glides to a new zoom and are placed afresh after
+      map.on("zoomstart", () => this.labelLayer.clearLayers());
       map.on("zoomend", () => { if (this._labelled) this.labelRoute(this._labelled); });
 
       this.familyLayer = L.layerGroup().addTo(map);
@@ -1390,6 +1393,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.markers = L.layerGroup().addTo(map);
       this.labelLayer = L.layerGroup().addTo(map);
       this.hoverLayer = L.layerGroup().addTo(map);
+      // the route on show and the hover dot are SVG, not canvas: they fade
+      // and move during zoom glides, and Safari has been seen to leave the
+      // canvas blank after one; the faint family lines stay on the canvas
+      this.svg = L.svg({ padding: 0.5 });
 
       // a pointer over the profile (or a finger dragged across it) marks
       // that point of the route on both the graph and the map
@@ -1679,7 +1686,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
      * stats following, so the search reads as the shape of the run being
      * worked out rather than a wait.  What was shown before fades out. */
     scanStart(from, targetM) {
-      this.setHover(null);
+      this.setHover(null); this._loopNext = null;
       const fl = this.familyLayer, rl = this.routeLayer, old = [];
       fl.eachLayer((l) => old.push(l)); rl.eachLayer((l) => old.push(l));
       if (old.length) fadeOut(old, 260, () => old.forEach((l) => { fl.removeLayer(l); rl.removeLayer(l); }));
@@ -1811,7 +1818,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     clearRoute() {
-      this.setHover(null);
+      this.setHover(null); this._loopNext = null;
       this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
       $("turns").hidden = true;
       this.shown = null; this._handoff = null; this._profCur = null;
@@ -1873,9 +1880,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       }
       fade = fade || !!prev;
       this._casing = L.polyline(u.latlngs, { color: casing, weight: 10, opacity: fade ? 0 : 0.9, interactive: false,
-        lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
+        lineJoin: "round", lineCap: "round", renderer: this.svg }).addTo(this.routeLayer);
       this._line = L.polyline(u.latlngs, { color: colour, weight: 5, opacity: fade ? 0 : 1, interactive: false,
-        lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
+        lineJoin: "round", lineCap: "round", renderer: this.svg }).addTo(this.routeLayer);
       if (fade) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
       this._casing.bringToFront(); this._line.bringToFront();
       $("prof").dataset.colour = colour;
@@ -2013,18 +2020,23 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           b.type = "button"; b.className = "link"; b.id = "nextloop";
           b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
           b.addEventListener("click", () => {
-            const next = (idx + 1) % n, nu = f.unique[next];
-            const go = () => { this.state.loopIdx = next; this.show(false); this.writeHash(); };
+            // taps in quick succession each advance one more: the target
+            // is counted from the last one asked for, not the one on show
+            const cur = this._loopNext !== undefined && this._loopNext !== null ? this._loopNext : this.state.loopIdx;
+            const next = (cur + 1) % n, nu = f.unique[next];
+            this._loopNext = next;
+            const go = () => { if (this.family !== f) return; this._loopNext = null; this.state.loopIdx = next; this.show(false); this.writeHash(); };
             if (this.inView(nu) && this.viewShare(nu) >= 0.35) { go(); return; }
             // the next loop needs a new view: the loop on show fades off,
-            // the map snaps to the next one, and that fades on (the same
-            // order as a new search), rather than snapping mid-crossfade
+            // the map glides to the next one, and that fades on (the same
+            // order as a new search), rather than moving mid-crossfade
             const old = [this._casing, this._line].filter(Boolean);
             this._casing = null; this._line = null;
             this.labelLayer.clearLayers(); this._labelled = null;
             this.setHover(null);
             if (old.length) fadeOut(old, 200, () => old.forEach((l) => this.routeLayer.removeLayer(l)));
-            setTimeout(() => { if (this.family !== f) return; this.fit(nu); go(); }, old.length && !reducedMotion() ? 220 : 0);
+            clearTimeout(this._loopTap);
+            this._loopTap = setTimeout(() => { if (this.family !== f || this._loopNext !== next) return; this.fit(nu); go(); }, old.length && !reducedMotion() ? 220 : 0);
           });
           el.append(" ", b);
         }
@@ -2047,7 +2059,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const fill = $("prof").dataset.colour || css("--route");
       if (!this._hoverDot) {
         this._hoverDot = L.circleMarker(ll, { radius: 6, color: "#fff", weight: 2.5, fillColor: fill, fillOpacity: 1,
-          interactive: false }).addTo(this.hoverLayer);
+          interactive: false, renderer: this.svg }).addTo(this.hoverLayer);
       } else { this._hoverDot.setLatLng(ll); this._hoverDot.setStyle({ fillColor: fill }); }
     },
 
