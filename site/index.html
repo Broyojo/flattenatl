@@ -27,7 +27,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <link rel="stylesheet" href="leaflet-340720efc3.css">
-<link rel="stylesheet" href="app-c6fcb6020a.css">
+<link rel="stylesheet" href="app-d50ed02832.css">
 </head>
 <body>
 <div id="map"></div>
@@ -83,23 +83,21 @@
   <details>
     <summary>How this works</summary>
     <p class="fine">Routes are computed in your browser over 160,000 street
-    segments, using USGS 1&nbsp;m lidar elevation and the Overture /
-    OpenStreetMap street graph. The slider runs along the whole trade-off
-    between distance and climbing: every route that nothing else beats on
-    both counts, from the shortest path to the flattest one worth walking
-    (where a foot of climb costs 200 ft of walking; beyond that the routes
-    stop being routes). Sliding right never shortens the route and never
-    adds climbing. Climbing is cumulative gain, not the net difference
-    between the endpoints. Stairways are allowed on foot and excluded on a
-    bike. The loop button (next to swap) turns the trip into a loop from
-    one start: the slider picks the distance, and the page tries dozens of
-    loops of about that length in every direction, out to one, two or
-    three turning points and home by different streets, and shows the
-    one with the least climbing. On a bike, <i>prefer calm streets</i> measures distance in comfort:
-    a block with a protected lane or path (SFMTA bikeway network) counts as
-    0.8 of its length, a quiet street as 1, a busy arterial without a lane as
-    1.4 to 2. Faint lines show the other routes along the way. Place search is offline: street intersections,
-    places and addresses for San Francisco are built into this page.
+    segments, with USGS 1&nbsp;m lidar elevation on the Overture /
+    OpenStreetMap street graph. The slider runs the whole trade-off between
+    distance and climbing: every route nothing else beats on both, from
+    the shortest to the flattest worth walking. Sliding right never
+    shortens the route and never adds climbing. Climbing is total gain,
+    not the difference between the endpoints. Stairs count on foot, not
+    on a bike.</p>
+    <p class="fine">The loop button turns the trip into a loop from one
+    start: the slider sets the distance, dozens of loops of about that
+    length are tried in every direction, and the flattest is shown. On a
+    bike, <i>prefer calm streets</i> counts protected lanes and paths
+    (SFMTA bikeway network) as shorter than they are and busy arterials as
+    longer.</p>
+    <p class="fine">Place search is offline: the city's intersections,
+    places and addresses are built into this page.
     <a href="https://github.com/almostimplemented/flattensf">Source, data and the full analysis</a>.</p>
   </details>
   <p class="credit-inline">by <a href="https://almostimplemented.com" rel="author">Drew Edwards</a></p>
