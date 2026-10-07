@@ -1092,7 +1092,7 @@
       const my = Math.max(56, Math.round(size.y * 0.12)), mx = Math.max(64, Math.round(size.x * 0.06));
       this.map.fitBounds(b, wide
         ? { paddingTopLeft: [card.right + mx, my], paddingBottomRight: [mx, my + 16], maxZoom: 15 }
-        : { paddingTopLeft: [28, 36], paddingBottomRight: [28, this.cardHeight() + 28], maxZoom: 15 });
+        : { paddingTopLeft: [28, Math.max(36, Math.round(size.y * 0.12))], paddingBottomRight: [28, this.cardHeight() + 28], maxZoom: 15 });
     },
     /* the height the card is about to have: blocks easing open or shut
      * carry their target height inline, so the bottom sheet's final size
@@ -1109,8 +1109,10 @@
         if (el.style.height) h += parseFloat(el.style.height) - el.getBoundingClientRect().height;
         if (el.style.marginTop) h += parseFloat(el.style.marginTop) - parseFloat(getComputedStyle(el).marginTop);
       }
+      // the card's max-height is a share of the viewport, which the map
+      // fills (its parent may be an unsized wrapper when the page is embedded)
       const max = getComputedStyle(card).maxHeight;
-      if (max.endsWith("%")) h = Math.min(h, card.parentElement.clientHeight * parseFloat(max) / 100);
+      if (max.endsWith("%")) h = Math.min(h, this.map.getSize().y * parseFloat(max) / 100);
       else if (max.endsWith("px")) h = Math.min(h, parseFloat(max));
       return h;
     },

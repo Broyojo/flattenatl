@@ -1,7 +1,13 @@
 """A manual-style pass over loop mode: every control, both directions, two viewports."""
 import functools, http.server, threading, sys, json
 from playwright.sync_api import sync_playwright
-h = functools.partial(http.server.SimpleHTTPRequestHandler, directory="/home/user/minihill/site"); h.log_message = lambda *a, **k: None
+# the built site by default; "embed" serves the artifact body inside an
+# unsized wrapper div, the way an embedding host presents the page
+import os
+ROOT = "/home/user/minihill/site"
+if len(sys.argv) > 1 and sys.argv[1] == "embed":
+    ROOT = "/tmp/claude-0/-home-user-minihill/d254be37-1566-5bd0-97bf-17a3d00b2c7e/scratchpad/embed"
+h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=ROOT); h.log_message = lambda *a, **k: None
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), h); threading.Thread(target=srv.serve_forever, daemon=True).start()
 BASE = f"http://127.0.0.1:{srv.server_address[1]}/"
 fails = []
