@@ -789,6 +789,8 @@ input[type=range]:focus-visible{outline:2px solid var(--focus);outline-offset:4p
 #prof{width:100%;height:92px;display:block;border-radius:8px;background:var(--field)}
 .statusrow{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .status{font-size:12px;color:var(--muted);min-height:1.2em}
+.status,.delta,.turns,.result,#prof{transition:opacity .16s ease}
+.fading{opacity:0!important}
 button.link{background:none;border:0;padding:0;font-size:12px;color:var(--accent);cursor:pointer;flex:none;text-decoration:underline;text-underline-offset:2px}
 button.link:hover{border:0}
 #sharebox{width:100%;font:11px var(--mono);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--field);color:var(--ink)}
@@ -1943,7 +1945,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   /* loop mode: the slider is the loop's length, in miles */
   const LOOP_MIN_MI = 1, LOOP_MAX_MI = 15, LOOP_STEP_MI = 0.5, LOOP_DEFAULT_MI = 4;
   /* while loops are tried, the map and profile show a new one this often */
-  const SCAN_FRAME_MS = 250;
+  // while loops are being tried the profile morphs from one candidate to
+  // the next; each morph takes this long, and text changes crossfade
+  const SCAN_MORPH_MS = 420, FADE_MS = 160;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -2259,7 +2263,6 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       map.on("zoomend", () => { if (this._labelled) this.labelRoute(this._labelled); });
 
       this.familyLayer = L.layerGroup().addTo(map);
-      this.scanLayer = L.layerGroup().addTo(map);
       this.routeLayer = L.layerGroup().addTo(map);
       this.markers = L.layerGroup().addTo(map);
       this.labelLayer = L.layerGroup().addTo(map);
@@ -2475,32 +2478,26 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       $("sl").disabled = false;
       if (!from) {
         this.clearRoute();
-        $("status").textContent = "Where do you start? Type a place or click the map.";
+        swapText($("status"), "Where do you start? Type a place or click the map.");
         return;
       }
       const g = this.graph;
-      $("status").textContent = "Trying loops…";
+      swapText($("status"), "Trying loops…");
       $("slpos").textContent = fmtLoop(loopMi);
       const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm() });
       this.scanStart(from, loopMi * MI);
       const run = () => {
         if (gen !== this._gen) return;
-        if (!search.step(30)) {
-          // the scan shows the latest loop at a steady pace (SCAN_FRAME_MS),
-          // not every loop the search builds, which would strobe
-          const now = performance.now();
-          if (search.last && search.last !== this._scan.last && now - this._scan.t >= SCAN_FRAME_MS) {
-            this._scan.t = now;
-            this.scanShow(search.last);
-          }
-          $("status").textContent = "Trying loops… " + search.tried;
+        // short slices, so the morph between candidates keeps its frame rate
+        if (!search.step(12)) {
+          if (search.last) this.scanShow(search.last);
           setTimeout(run, 0);
           return;
         }
         this.scanEnd();
         if (!search.loops.length) {
           this.clearRoute();
-          $("status").textContent = "No loop from here. Try another start.";
+          swapText($("status"), "No loop from here. Try another start.");
           return;
         }
         const members = search.loops.map((r) => this.member(r.arcs));
@@ -2511,10 +2508,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.state.loopIdx = Math.min(this._pendingLoopIdx || 0, members.length - 1);
         this._pendingLoopIdx = 0;
         this.shown = null;
-        $("status").textContent = search.shortfall
+        swapText($("status"), search.shortfall
           ? "No " + fmtLoop(loopMi) + " fits here; this is the closest."
-          : "The flattest of " + search.tried + " loops tried.";
-        this.drawFamily();
+          : "The flattest of " + search.tried + " loops tried.");
+        this.drawFamily(true);
         this.show(true);
         // a loop that spills out of view, or has shrunk to a small part of
         // it (the length slider moved down), is refitted and recentred
@@ -2525,17 +2522,22 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       setTimeout(run, 0);
     },
 
-    /* The scan: while the loop search runs, each loop it tries flashes on
-     * the map (the last few fade out behind it), the profile morphs from
-     * one to the next and the stats follow, so the search reads as a sweep
-     * around the start rather than a wait. */
+    /* The scan: while the loop search runs, the map holds still and the
+     * elevation profile morphs from one candidate loop to the next, the
+     * stats following, so the search reads as the shape of the run being
+     * worked out rather than a wait.  What was shown before fades out. */
     scanStart(from, targetM) {
-      this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
-      this.scanLayer.clearLayers();
-      this._line = null; this._labelled = null; this.shown = null;
-      $("turns").hidden = true;
-      $("delta").textContent = "Trying loops of about " + fmtLoop(targetM / MI).replace(" loop", "") + " in every direction…";
-      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity, t: -Infinity };
+      const fl = this.familyLayer, rl = this.routeLayer, old = [];
+      fl.eachLayer((l) => old.push(l)); rl.eachLayer((l) => old.push(l));
+      if (old.length) fadeOut(old, 260, () => old.forEach((l) => { fl.removeLayer(l); rl.removeLayer(l); }));
+      this.labelLayer.clearLayers();
+      this._line = null; this._casing = null; this._labelled = null; this.shown = null;
+      hideSoft($("turns"));
+      swapText($("delta"), "About " + fmtLoop(targetM / MI).replace(" loop", "") + ", in every direction from here.");
+      // the profile carries on from wherever it is; nothing drawn yet
+      // means the first candidate rises out of a flat line
+      const cur = !$("prof").hidden && this._profCur ? this._profCur : null;
+      this._scan = { cur, target: null, busy: false };
       // frame the area the loops will cover before they start appearing
       const r = targetM / 5, dLat = r / 110540, dLon = r / (111320 * Math.cos(from.lat * Math.PI / 180));
       const area = L.latLngBounds([from.lat - dLat, from.lon - dLon], [from.lat + dLat, from.lon + dLon]);
@@ -2544,31 +2546,33 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (!this.inView() || this.viewShare() < 0.35) this.fit();
       this.family = keep;
     },
+    /* the latest candidate: morph to it once the current morph is done */
     scanShow(r) {
-      const g = this.graph, sc = this._scan;
-      sc.last = r;
-      const s = g.summarise(r.arcs);
-      const m = { latlngs: g.geometry(r.arcs, this.geom), profile: resample(s.profile, 160), stats: s };
-      for (const z of m.profile.z) { if (z < sc.zmin) sc.zmin = z; if (z > sc.zmax) sc.zmax = z; }
-      const line = L.polyline(m.latlngs, { color: css("--route"), weight: 3, opacity: 0.85, interactive: false,
-        lineJoin: "round", lineCap: "round" }).addTo(this.scanLayer);
-      sc.lines.unshift(line);
-      const fades = [0.9, 0.35, 0.15];
-      sc.lines.forEach((l, i) => { if (i < fades.length) l.setStyle({ opacity: fades[i], weight: i ? 2 : 3 }); });
-      while (sc.lines.length > fades.length) this.scanLayer.removeLayer(sc.lines.pop());
-      $("result").hidden = false;
-      $("v_dist").innerHTML = fmtMi(s.distance_m);
-      $("v_climb").innerHTML = fmtFt(s.elev_gain_m);
-      $("v_grade").innerHTML = fmtPct(s.steepest);
+      const sc = this._scan;
+      if (!sc || sc.busy || r === sc.target) return;
+      sc.target = r;
+      const s = this.graph.summarise(r.arcs);
+      const m = { profile: resample(s.profile, 160), stats: s };
+      let from = sc.cur || this._profCur;
+      if (!from) {
+        const z0 = Math.min(...m.profile.z);
+        from = { profile: { z: new Float64Array(m.profile.z.length).fill(z0) }, stats: s, range: { min: z0, max: z0 } };
+      }
+      sc.cur = null;
+      // the vertical scale only grows during the scan, eased with the shape
+      const to = rangeOf([m], from.range);
+      showSoft($("result"));
       $("prof").dataset.colour = css("--route");
-      const from = sc.prev || m;
-      sc.prev = m;
-      this.animateProfile(from, m, SCAN_FRAME_MS - 30);
+      sc.busy = true;
+      this.animateProfile(from, m, SCAN_MORPH_MS, { range: { from: from.range, to }, stats: true,
+        done: () => { sc.busy = false; } });
     },
+    /* the result then morphs in from wherever the scan left the profile */
     scanEnd() {
       if (!this._scan) return;
-      this.scanLayer.clearLayers();
       this._scan = null;
+      if (this._profAnim) cancelAnimationFrame(this._profAnim);
+      this._handoff = !$("prof").hidden && this._profCur ? this._profCur : null;
     },
 
     recompute(fit) {
@@ -2579,17 +2583,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const gen = ++this._gen;
       if (!from || !to) {
         this.clearRoute();
-        $("status").textContent = !from && !to ? "Type two places, or click the map twice."
-          : (!from ? "Where are you starting from?" : "Where to?");
+        swapText($("status"), !from && !to ? "Type two places, or click the map twice."
+          : (!from ? "Where are you starting from?" : "Where to?"));
         return;
       }
-      if (from.node === to.node) { this.clearRoute(); $("status").textContent = "Those are the same corner."; return; }
+      if (from.node === to.node) { this.clearRoute(); swapText($("status"), "Those are the same corner."); return; }
       const g = this.graph;
       const shortest = g.route(from.node, to.node, mode, this.weights(0));
       if (!shortest) {
         this.clearRoute();
-        $("status").textContent = mode === "bike" ? "No bikeable route between those points."
-          : "No route between those points.";
+        swapText($("status"), mode === "bike" ? "No bikeable route between those points."
+          : "No route between those points.");
         return;
       }
       // the shortest and the flattest routes go up at once, so the map can
@@ -2602,7 +2606,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.family = { unique: sameEnds ? [first] : [first, fm], shortest: first, partial: true };
       this.family.unique.forEach((m, i) => { m.id = i; });
       this.shown = null;
-      $("status").textContent = "Finding every route between shortest and flattest…";
+      swapText($("status"), "Finding every route between shortest and flattest…");
       $("sl").disabled = true;
       this.drawFamily();
       this.show(true);
@@ -2618,8 +2622,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const run = () => {
         if (gen !== this._gen) return;          // the trip changed underneath us
         if (!search.step(30)) {
-          $("status").textContent = "Finding every route between shortest and flattest… "
-            + search.solutions.length;
+          setText($("status"), "Finding every route between shortest and flattest… "
+            + search.solutions.length);
           setTimeout(run, 0);
           return;
         }
@@ -2652,9 +2656,9 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       members.forEach((m, i) => { m.id = i; });
       this.family = { unique: members, shortest: members[0], partial: false };
       $("sl").disabled = false;
-      $("status").textContent = members.length === 1
+      swapText($("status"), members.length === 1
         ? "One route: the shortest is already the flattest."
-        : members.length + " distinct routes, from shortest to flattest.";
+        : members.length + " distinct routes, from shortest to flattest.");
       this.drawFamily();
       this.show(false);
       if (fit && !this.inView()) this.fit();
@@ -2663,7 +2667,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     clearRoute() {
       this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
       $("turns").hidden = true;
-      this.shown = null;
+      this.shown = null; this._handoff = null; this._profCur = null;
       $("result").hidden = true; $("prof").hidden = true; $("delta").textContent = ""; $("slpos").textContent = "";
       $("share").hidden = true; $("sharebox").hidden = true;
       $("sl").disabled = false;
@@ -2675,12 +2679,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       return clamp(Math.round(t * (n - 1)), 0, n - 1);
     },
 
-    drawFamily() {
+    drawFamily(fade) {
       this.familyLayer.clearLayers();
-      for (const u of this.family.unique) {
-        L.polyline(u.latlngs, { color: css("--family"), weight: 2, opacity: 0.45, interactive: false,
-          lineJoin: "round", lineCap: "round" }).addTo(this.familyLayer);
-      }
+      const lines = this.family.unique.map((u) =>
+        L.polyline(u.latlngs, { color: css("--family"), weight: 2, opacity: fade ? 0 : 0.45, interactive: false,
+          lineJoin: "round", lineCap: "round" }).addTo(this.familyLayer));
+      if (fade) fadeIn(lines.map((l) => [l, 0.45]), 260);
     },
 
     /* show the family member for the current slider position */
@@ -2696,9 +2700,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const prev = this.shown;
       if (prev === u) { this.tintRoute(colour); return; }
       this.shown = u;
-      this.drawRoute(u, colour, prev && !immediate ? prev : null);
-      this.drawStats(u, prev && !immediate ? prev : u);
-      this.animateProfile(prev && !immediate ? prev : u, u);
+      // after a scan the profile and stats carry on from where it left them
+      const hand = this._handoff; this._handoff = null;
+      const from = hand || (prev && !immediate ? prev : null);
+      this.drawRoute(u, colour, prev && !immediate ? prev : null, !!hand);
+      this.drawStats(u, from || u);
+      this.animateProfile(from || u, u, 300, hand ? { range: { from: hand.range, to: rangeOf(this.family.unique) } } : {});
     },
 
     tintRoute(colour) {
@@ -2707,7 +2714,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (this.shown) this.drawProfile(this.shown, this.shown, 1);
     },
 
-    drawRoute(u, colour, prev) {
+    drawRoute(u, colour, prev, fade) {
       // crossfade: the old line fades out while the new one fades in
       const casing = css("--route-casing");
       if (this._line && prev) {
@@ -2716,11 +2723,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       } else {
         this.routeLayer.clearLayers();
       }
-      this._casing = L.polyline(u.latlngs, { color: casing, weight: 10, opacity: prev ? 0 : 0.9, interactive: false,
+      fade = fade || !!prev;
+      this._casing = L.polyline(u.latlngs, { color: casing, weight: 10, opacity: fade ? 0 : 0.9, interactive: false,
         lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
-      this._line = L.polyline(u.latlngs, { color: colour, weight: 5, opacity: prev ? 0 : 1, interactive: false,
+      this._line = L.polyline(u.latlngs, { color: colour, weight: 5, opacity: fade ? 0 : 1, interactive: false,
         lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
-      if (prev) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
+      if (fade) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
       this._casing.bringToFront(); this._line.bringToFront();
       $("prof").dataset.colour = colour;
       this.labelRoute(u);
@@ -2792,7 +2800,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     drawStats(u, prevU) {
-      $("result").hidden = false;
+      showSoft($("result"));
       const runs = this.runs(u, 60);
       const box = $("turns");
       box.innerHTML = "";
@@ -2812,7 +2820,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         }
       };
       render(false);
-      box.hidden = runs.length === 0;
+      if (runs.length) showSoft(box); else hideSoft(box);
       const s = u.stats, p = prevU.stats;
       tween(260, (k) => {
         $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
@@ -2822,10 +2830,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (this.family.loop) { this.drawLoopDelta(u); return; }
       const sh = this.family.shortest.stats;
       if (u === this.family.shortest) {
-        $("delta").innerHTML = this.family.unique.length > 1
+        setText($("delta"), this.family.unique.length > 1
           ? (this.calm() ? "The shortest route on calm streets. Slide right to trade distance for less climbing."
             : "The shortest route. Slide right to trade distance for less climbing.")
-          : "Shortest and flattest at once.";
+          : "Shortest and flattest at once.", true);
       } else {
         const dd = s.distance_m - sh.distance_m, dc = sh.elev_gain_m - s.elev_gain_m;
         const pd = sh.distance_m ? Math.round(100 * dd / sh.distance_m) : 0;
@@ -2834,7 +2842,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           : "<b class='up'>+" + (dd / MI).toFixed(1) + " mi</b> (" + pd + "% longer)";
         const less = dc <= 0 ? "no less climbing"
           : "<b class='down'>−" + Math.round(dc * FT).toLocaleString() + " ft</b> of climbing (" + pc + "% less)";
-        $("delta").innerHTML = "vs. shortest: " + longer + ", " + less;
+        setText($("delta"), "vs. shortest: " + longer + ", " + less, true);
       }
     },
 
@@ -2849,34 +2857,47 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         html = "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
           + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
       } else html = "About as flat as loops from here get.";
-      box.innerHTML = html;
-      if (n > 1) {
-        const b = document.createElement("button");
-        b.type = "button"; b.className = "link"; b.id = "nextloop";
-        b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
-        b.addEventListener("click", () => {
-          this.state.loopIdx = (idx + 1) % n;
-          this.show(false);
-          this.writeHash();
-        });
-        box.append(" ", b);
-      }
+      swapText(box, (el) => {
+        el.innerHTML = html;
+        if (n > 1) {
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "link"; b.id = "nextloop";
+          b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
+          b.addEventListener("click", () => {
+            this.state.loopIdx = (idx + 1) % n;
+            this.show(false);
+            this.writeHash();
+          });
+          el.append(" ", b);
+        }
+      });
     },
 
     /* ------------------------------------------------------------ profile */
-    animateProfile(a, b, ms = 300) {
-      $("prof").hidden = false;
+    /* morph the profile from a to b; opts.range eases the vertical scale
+     * between two {min, max} ranges, opts.stats carries the numbers along,
+     * opts.done runs when the morph completes (not when it is cut short) */
+    animateProfile(a, b, ms = 300, opts = {}) {
+      const cv = $("prof");
+      if (cv.hidden) { cv.hidden = false; cv.classList.add("fading"); void cv.offsetWidth; cv.classList.remove("fading"); }
       if (this._profAnim) cancelAnimationFrame(this._profAnim);
       const t0 = performance.now();
       const frame = (now) => {
-        const k = clamp((now - t0) / ms, 0, 1);
-        this.drawProfile(a, b, ease(k));
+        const k = ease(clamp((now - t0) / ms, 0, 1));
+        this.drawProfile(a, b, k, opts.range);
+        if (opts.stats) {
+          const p = a.stats, s = b.stats;
+          $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
+          $("v_climb").innerHTML = fmtFt(lerp(p.elev_gain_m, s.elev_gain_m, k));
+          $("v_grade").innerHTML = fmtPct(lerp(p.steepest, s.steepest, k));
+        }
         if (k < 1) this._profAnim = requestAnimationFrame(frame);
+        else { this._profAnim = null; if (opts.done) opts.done(); }
       };
       this._profAnim = requestAnimationFrame(frame);
     },
 
-    drawProfile(a, b, k) {
+    drawProfile(a, b, k, range) {
       const cv = $("prof"), dpr = window.devicePixelRatio || 1;
       const W = cv.clientWidth || 360, H = cv.clientHeight || 92;
       if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
@@ -2887,12 +2908,15 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const z = new Float64Array(n);
       for (let i = 0; i < n; i++) z[i] = lerp(a.profile.z[i], b.profile.z[i], k);
       const dist = lerp(a.stats.distance_m, b.stats.distance_m, k);
-      // a fixed vertical scale across the family keeps the hills comparable
-      let zmin = Infinity, zmax = -Infinity;
-      // (while loops are being tried there is no family yet: the scan keeps
-      // a running range so the hills stay comparable from loop to loop)
-      if (this._scan && Number.isFinite(this._scan.zmin)) { zmin = this._scan.zmin; zmax = this._scan.zmax; }
-      else for (const u of (this.family ? this.family.unique : [a, b])) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+      // a fixed vertical scale across the family keeps the hills comparable;
+      // a morph that changes scale (the scan, or coming out of it) eases it
+      let zmin, zmax;
+      if (range) { zmin = lerp(range.from.min, range.to.min, k); zmax = lerp(range.from.max, range.to.max, k); }
+      else ({ min: zmin, max: zmax } = rangeOf(this.family ? this.family.unique : [a, b]));
+      // what is on the canvas right now, so another morph can start from it
+      this._profCur = { profile: { z }, range: { min: zmin, max: zmax }, stats: {
+        distance_m: dist, elev_gain_m: lerp(a.stats.elev_gain_m, b.stats.elev_gain_m, k),
+        steepest: lerp(a.stats.steepest, b.stats.steepest, k) } };
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
       const padL = 6, padR = 6, top = 8, bottom = 18;
@@ -3096,6 +3120,45 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   }
   function fadeIn(pairs, ms) {
     tween(ms, (k) => { pairs.forEach(([l, o]) => l.setStyle({ opacity: o * k })); });
+  }
+  /* the elevation range of some profiles, optionally grown from a range */
+  function rangeOf(members, from) {
+    let min = from ? from.min : Infinity, max = from ? from.max : -Infinity;
+    for (const u of members) for (const v of u.profile.z) { if (v < min) min = v; if (v > max) max = v; }
+    return { min, max };
+  }
+  /* Text changes crossfade rather than jump: the element fades out, the
+   * new content (a string, or a function that fills the element) goes in,
+   * and it fades back.  Calls during a fade coalesce into the latest. */
+  function swapText(el, fill) {
+    if (typeof fill !== "function" && el.textContent === fill && !el._swap) return;
+    el._swap = typeof fill === "function" ? () => fill(el) : () => { el.textContent = fill; };
+    if (el._swapTimer) return;
+    if (!el.textContent && !el.children.length) { el._swap(); el._swap = null; return; }
+    el.classList.add("fading");
+    el._swapTimer = setTimeout(() => {
+      el._swapTimer = null;
+      const f = el._swap; el._swap = null; if (f) f();
+      el.classList.remove("fading");
+    }, FADE_MS);
+  }
+  /* and set content without a fade (a counter, the slider); a fade in
+   * flight just picks up the latest value instead */
+  function setText(el, value, html) {
+    const apply = () => { if (html) el.innerHTML = value; else el.textContent = value; };
+    if (el._swapTimer) el._swap = apply; else apply();
+  }
+  /* hide and show blocks with the same fade */
+  function hideSoft(el) {
+    if (el.hidden) return;
+    el.classList.add("fading");
+    setTimeout(() => { if (el.classList.contains("fading")) { el.hidden = true; el.classList.remove("fading"); } }, FADE_MS);
+  }
+  function showSoft(el) {
+    if (!el.hidden && !el.classList.contains("fading")) return;
+    el.classList.add("fading"); el.hidden = false;
+    void el.offsetWidth;                       // flush, so the fade-in runs
+    el.classList.remove("fading");
   }
 
   App.ALPHA_MAX = ALPHA_MAX; App._gen = 0;
