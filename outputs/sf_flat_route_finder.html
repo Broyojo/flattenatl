@@ -2910,10 +2910,18 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           b.type = "button"; b.className = "link"; b.id = "nextloop";
           b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
           b.addEventListener("click", () => {
-            this.state.loopIdx = (idx + 1) % n;
-            this.show(false);
-            if (!this.inView() || this.viewShare() < 0.35) this.fit();
-            this.writeHash();
+            const next = (idx + 1) % n, nu = f.unique[next];
+            const go = () => { this.state.loopIdx = next; this.show(false); this.writeHash(); };
+            if (this.inView(nu) && this.viewShare(nu) >= 0.35) { go(); return; }
+            // the next loop needs a new view: the loop on show fades off,
+            // the map snaps to the next one, and that fades on (the same
+            // order as a new search), rather than snapping mid-crossfade
+            const old = [this._casing, this._line].filter(Boolean);
+            this._casing = null; this._line = null;
+            this.labelLayer.clearLayers(); this._labelled = null;
+            this.setHover(null);
+            if (old.length) fadeOut(old, 200, () => old.forEach((l) => this.routeLayer.removeLayer(l)));
+            setTimeout(() => { if (this.family !== f) return; this.fit(nu); go(); }, old.length && !reducedMotion() ? 220 : 0);
           });
           el.append(" ", b);
         }
@@ -3033,17 +3041,17 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     /* what the map is fitted to: the whole frontier between two places
      * (its routes share the ends), but only the loop on show, since the
      * other loops offered can lie in any direction from the start */
-    familyBounds() {
+    familyBounds(u) {
       const b = L.latLngBounds([]);
-      const members = this.family.loop && this.shown ? [this.shown] : this.family.unique;
+      const members = this.family.loop ? [u || this.shown || this.family.unique[0]] : this.family.unique;
       for (const u of members) for (const ll of u.latlngs) b.extend(ll);
       return b;
     },
     /* is the whole family inside the part of the map the card does not cover? */
-    inView() {
+    inView(u) {
       if (!this.family) return true;
       const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
-      const b = this.familyBounds();
+      const b = this.familyBounds(u);
       const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
       const wide = size.x > 640;
       const x0 = wide ? card.right + 16 : 16, y1 = wide ? size.y - 16 : card.top - 16;
@@ -3051,18 +3059,18 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
     /* how much of the uncovered map the family spans, in its larger
      * direction (1 = edge to edge) */
-    viewShare() {
+    viewShare(u) {
       if (!this.family) return 1;
       const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
-      const b = this.familyBounds();
+      const b = this.familyBounds(u);
       const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
       const wide = size.x > 640;
       const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
       return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
     },
-    fit() {
+    fit(u) {
       if (!this.family) return;
-      const b = this.familyBounds();
+      const b = this.familyBounds(u);
       const size = this.map.getSize();
       const wide = size.x > 640;
       const card = $("card").getBoundingClientRect();
