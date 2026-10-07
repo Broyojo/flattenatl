@@ -39,11 +39,18 @@
   const EPS_NODE_CM = 10;
   /* at most this many routes on the slider, spread evenly along the frontier */
   const MAX_ROUTES = 30;
+  /* loop mode: the slider is the loop's length, in miles */
+  const LOOP_MIN_MI = 1, LOOP_MAX_MI = 15, LOOP_STEP_MI = 0.5, LOOP_DEFAULT_MI = 4;
+  /* while loops are tried, the map and profile show a new one this often */
+  // while loops are being tried the profile morphs from one candidate to
+  // the next; each morph takes this long, and text changes crossfade
+  const SCAN_MORPH_MS = 420, FADE_MS = 160, GROW_MS = 200;
 
   const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const lerp = (a, b, t) => a + (b - a) * t;
   const ease = (t) => 1 - Math.pow(1 - t, 3);
+  const easeInOut = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
   function hexToRgb(h) {
     h = h.replace("#", "");
@@ -288,7 +295,8 @@
 
   /* -------------------------------------------------------------- the app */
   const App = {
-    state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true },
+    state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
+      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: false },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -321,7 +329,7 @@
     buildMap() {
       const map = L.map("map", {
         zoomControl: false, attributionControl: true, preferCanvas: true,
-        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.5,
+        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.25,
       });
       map.attributionControl.setPrefix("");
       map.attributionControl.addAttribution(
@@ -358,7 +366,8 @@
       this.labelLayer = L.layerGroup().addTo(map);
 
       map.on("click", (e) => {
-        const which = !this.state.from ? "from" : (!this.state.to ? "to" : this.state.focus);
+        const which = this.state.loop ? "from"
+          : (!this.state.from ? "from" : (!this.state.to ? "to" : this.state.focus));
         this.setPoint(which, this.pointAt(e.latlng.lng, e.latlng.lat), true);
         this.recompute("auto");
       });
@@ -388,7 +397,7 @@
       input.dataset.set = pt ? "1" : "";
       this.hideSuggest(which);
       this.drawMarkers();
-      if (typed && !this.state[which === "from" ? "to" : "from"]) {
+      if (typed && !this.state.loop && !this.state[which === "from" ? "to" : "from"]) {
         $(which === "from" ? "to" : "from").focus();
       }
     },
@@ -397,6 +406,7 @@
       this.markers.clearLayers();
       for (const which of ["from", "to"]) {
         const p = this.state[which]; if (!p) continue;
+        if (which === "to" && this.state.loop) continue;
         const m = L.marker([p.lat, p.lon], {
           draggable: true, keyboard: false, title: which === "from" ? "Start" : "Destination",
           icon: L.divIcon({ className: "pin-icon " + which, iconSize: [18, 18], iconAnchor: [9, 9] }),
@@ -434,6 +444,11 @@
             : this.pointAt(it.lon, it.lat, it.name);
           items = []; render();
           this.setPoint(which, pt, true);
+          // done typing here: on to the other field if it is still empty,
+          // otherwise out, so the card shows the result (on a phone it is
+          // folded to the fields while typing)
+          const other = which === "from" ? "to" : "from";
+          if (!this.state.loop && !this.state[other]) $(other).focus(); else input.blur();
           this.recompute("auto");
         };
         input.addEventListener("focus", () => {
@@ -460,7 +475,9 @@
         this["hide_" + which] = () => { items = []; render(); };
       }
 
+      $("loopbtn").addEventListener("click", () => this.setLoop(!this.state.loop, true));
       $("swap").addEventListener("click", () => {
+        if (this.state.loop) return;
         const a = this.state.from, b = this.state.to;
         this.setPoint("from", b, false); this.setPoint("to", a, false);
         this.recompute("auto");
@@ -476,15 +493,32 @@
             const p = this.state[w]; if (!p) continue;
             this.state[w] = Object.assign({}, p, { node: this.nearestNode(p.lon, p.lat) });
           }
-          this.recompute(false);
+          this.recompute("auto");
         });
       }
       $("calm").addEventListener("change", () => {
         this.state.calm = $("calm").checked;
-        this.recompute(false);
+        this.recompute("auto");
+      });
+      $("outback").addEventListener("change", () => {
+        this.state.outBack = $("outback").checked;
+        this.recompute(true);            // a different kind of run: reframe it
       });
       const sl = $("sl");
-      sl.addEventListener("input", () => { this.state.t = +sl.value; this.show(); this.writeHash(); });
+      sl.addEventListener("input", () => {
+        if (!this.state.loop) { this.state.t = +sl.value; this.show(); this.writeHash(); return; }
+        // loop length: the label follows the thumb; the search runs once the
+        // thumb settles, so dragging across the range does not queue searches
+        this.state.loopMi = +sl.value;
+        $("slpos").textContent = fmtLoop(this.state.loopMi);
+        clearTimeout(this._loopTimer);
+        this._loopTimer = setTimeout(() => this.recompute("auto"), 350);
+      });
+      sl.addEventListener("change", () => {
+        if (!this.state.loop) return;
+        clearTimeout(this._loopTimer);
+        this.recompute("auto");
+      });
       $("share").addEventListener("click", () => {
         const url = this.shareUrl(), box = $("sharebox"), btn = $("share");
         const done = () => { btn.textContent = "Link copied"; setTimeout(() => { btn.textContent = "Copy link"; }, 1800); };
@@ -510,23 +544,163 @@
         use_class_multiplier: false, stress: this.calm() };
     },
 
+    /* Loop mode on or off. The To field folds away (its place is kept, so
+     * turning the loop off brings the destination back) and the slider
+     * becomes the loop's length. */
+    setLoop(on, recompute) {
+      if (this.state.loop === on) return;
+      this.state.loop = on;
+      $("card").classList.toggle("looping", on);
+      const btn = $("loopbtn"), sl = $("sl");
+      const label = on ? "Go from A to B" : "Make it a loop";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = label; btn.setAttribute("aria-label", label);
+      $("obrow").hidden = !on;
+      if (on) {
+        this.state.savedTo = this.state.to; this.state.to = null;
+        sl.min = LOOP_MIN_MI; sl.max = LOOP_MAX_MI; sl.step = LOOP_STEP_MI; sl.value = this.state.loopMi;
+        sl.setAttribute("aria-label", "Loop length in miles");
+        $("end0").textContent = LOOP_MIN_MI + " mi"; $("end1").textContent = LOOP_MAX_MI + " mi";
+        $("slpos").textContent = fmtLoop(this.state.loopMi);
+        $("to").tabIndex = -1;
+      } else {
+        this.state.to = this.state.savedTo; this.state.savedTo = null;
+        sl.min = 0; sl.max = 1; sl.step = 0.001; sl.value = this.state.t;
+        sl.setAttribute("aria-label", "From shortest to flattest");
+        $("end0").textContent = "Shortest"; $("end1").textContent = "Flattest";
+        $("slpos").textContent = "";
+        $("to").tabIndex = 0;
+        if (this.state.to) this.state.to = Object.assign({}, this.state.to, { node: this.nearestNode(this.state.to.lon, this.state.to.lat) });
+      }
+      $("to").value = this.state.to ? this.state.to.label : "";
+      $("to").dataset.set = this.state.to ? "1" : "";
+      this.drawMarkers();
+      if (recompute) this.recompute(true);
+    },
+
+    /* the flattest loops of about the chosen length from the start */
+    recomputeLoop(fit) {
+      const { from, mode, loopMi } = this.state;
+      this.family = null;
+      const gen = ++this._gen;
+      $("sl").disabled = false;
+      if (!from) {
+        this.clearRoute();
+        swapText($("status"), "Where do you start? Type a place or click the map.");
+        return;
+      }
+      const g = this.graph;
+      swapText($("status"), "Trying loops…");
+      $("slpos").textContent = fmtLoop(loopMi);
+      const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm(), outBack: this.state.outBack });
+      this.scanStart(from, loopMi * MI);
+      const run = () => {
+        if (gen !== this._gen) return;
+        // short slices, so the morph between candidates keeps its frame rate
+        if (!search.step(12)) {
+          if (search.last) this.scanShow(search.last);
+          setTimeout(run, 0);
+          return;
+        }
+        // a morph in flight finishes before the result takes over from it
+        if (this._scan && this._scan.busy) { this._scan.onIdle = finish; return; }
+        finish();
+      };
+      const finish = () => {
+        if (gen !== this._gen) return;
+        this.scanEnd();
+        if (!search.loops.length) {
+          this.clearRoute();
+          swapText($("status"), "No loop from here. Try another start.");
+          return;
+        }
+        const members = search.loops.map((r) => Object.assign(this.member(r.arcs), { kind: r.kind }));
+        members.forEach((m, i) => { m.id = i; });
+        this.family = { unique: members, shortest: members[0], partial: false, loop: true,
+          targetM: loopMi * MI, medianGain: search.medianGain, tried: search.accepted.length,
+          shortfall: search.shortfall };
+        this.state.loopIdx = Math.min(this._pendingLoopIdx || 0, members.length - 1);
+        this._pendingLoopIdx = 0;
+        this.shown = null;
+        swapText($("status"), search.shortfall
+          ? "No " + fmtLoop(loopMi) + " fits here; this is the closest."
+          : "The flattest of " + search.tried + " loops tried.");
+        this.drawFamily(true);
+        this.show(true);
+        // a loop that spills out of view, or has shrunk to a small part of
+        // it (the length slider moved down), is refitted and recentred
+        if (fit === true || (fit === "auto" && (!this.inView() || this.viewShare() < 0.35))) this.fit();
+        this.writeHash();
+        $("share").hidden = false; $("sharebox").hidden = true;
+      };
+      setTimeout(run, 0);
+    },
+
+    /* The scan: while the loop search runs, the map holds still and the
+     * elevation profile morphs from one candidate loop to the next, the
+     * stats following, so the search reads as the shape of the run being
+     * worked out rather than a wait.  What was shown before fades out. */
+    scanStart(from, targetM) {
+      const fl = this.familyLayer, rl = this.routeLayer, old = [];
+      fl.eachLayer((l) => old.push(l)); rl.eachLayer((l) => old.push(l));
+      if (old.length) fadeOut(old, 260, () => old.forEach((l) => { fl.removeLayer(l); rl.removeLayer(l); }));
+      this.labelLayer.clearLayers();
+      this._line = null; this._casing = null; this._labelled = null; this.shown = null;
+      hideSoft($("turns"));
+      swapText($("delta"), "About " + fmtLoop(targetM / MI).replace(" loop", "") + ", in every direction from here.");
+      // the profile carries on from wherever it is; nothing drawn yet
+      // means the first candidate rises out of a flat line
+      const cur = !$("prof").hidden && this._profCur ? this._profCur : null;
+      this._scan = { cur, target: null, busy: false, onIdle: null };
+    },
+    /* the latest candidate: morph to it once the current morph is done */
+    scanShow(r) {
+      const sc = this._scan;
+      if (!sc || sc.busy || r === sc.target) return;
+      sc.target = r;
+      const s = this.graph.summarise(r.arcs);
+      const m = { profile: resample(s.profile, 160), stats: s };
+      let from = sc.cur || this._profCur;
+      if (!from) {
+        const z0 = Math.min(...m.profile.z);
+        from = { profile: { z: new Float64Array(m.profile.z.length).fill(z0) }, stats: s, range: { min: z0, max: z0 } };
+      }
+      sc.cur = null;
+      // the vertical scale follows each candidate, eased along with the shape
+      const to = rangeOf([m]);
+      showSoft($("result"));
+      $("prof").dataset.colour = css("--route");
+      sc.busy = true;
+      this.animateProfile(from, m, SCAN_MORPH_MS, { range: { from: from.range, to }, stats: true, ease: easeInOut,
+        done: () => { sc.busy = false; if (sc.onIdle) { const f = sc.onIdle; sc.onIdle = null; f(); } } });
+    },
+    /* the result then morphs in from wherever the scan left the profile */
+    scanEnd() {
+      if (!this._scan) return;
+      this._scan = null;
+      if (this._profAnim) cancelAnimationFrame(this._profAnim);
+      this._handoff = !$("prof").hidden && this._profCur ? this._profCur : null;
+    },
+
     recompute(fit) {
+      if (this.state.loop) return this.recomputeLoop(fit);
+      this.scanEnd();
       const { from, to, mode } = this.state;
       this.family = null;
       const gen = ++this._gen;
       if (!from || !to) {
         this.clearRoute();
-        $("status").textContent = !from && !to ? "Type two places, or click the map twice."
-          : (!from ? "Where are you starting from?" : "Where to?");
+        swapText($("status"), !from && !to ? "Type two places, or click the map twice."
+          : (!from ? "Where are you starting from?" : "Where to?"));
         return;
       }
-      if (from.node === to.node) { this.clearRoute(); $("status").textContent = "Those are the same corner."; return; }
+      if (from.node === to.node) { this.clearRoute(); swapText($("status"), "Those are the same corner."); return; }
       const g = this.graph;
       const shortest = g.route(from.node, to.node, mode, this.weights(0));
       if (!shortest) {
         this.clearRoute();
-        $("status").textContent = mode === "bike" ? "No bikeable route between those points."
-          : "No route between those points.";
+        swapText($("status"), mode === "bike" ? "No bikeable route between those points."
+          : "No route between those points.");
         return;
       }
       // the shortest and the flattest routes go up at once, so the map can
@@ -539,7 +713,7 @@
       this.family = { unique: sameEnds ? [first] : [first, fm], shortest: first, partial: true };
       this.family.unique.forEach((m, i) => { m.id = i; });
       this.shown = null;
-      $("status").textContent = "Finding every route between shortest and flattest…";
+      swapText($("status"), "Finding every route between shortest and flattest…");
       $("sl").disabled = true;
       this.drawFamily();
       this.show(true);
@@ -555,8 +729,8 @@
       const run = () => {
         if (gen !== this._gen) return;          // the trip changed underneath us
         if (!search.step(30)) {
-          $("status").textContent = "Finding every route between shortest and flattest… "
-            + search.solutions.length;
+          setText($("status"), "Finding every route between shortest and flattest… "
+            + search.solutions.length);
           setTimeout(run, 0);
           return;
         }
@@ -589,9 +763,9 @@
       members.forEach((m, i) => { m.id = i; });
       this.family = { unique: members, shortest: members[0], partial: false };
       $("sl").disabled = false;
-      $("status").textContent = members.length === 1
+      swapText($("status"), members.length === 1
         ? "One route: the shortest is already the flattest."
-        : members.length + " distinct routes, from shortest to flattest.";
+        : members.length + " distinct routes, from shortest to flattest.");
       this.drawFamily();
       this.show(false);
       if (fit && !this.inView()) this.fit();
@@ -600,7 +774,7 @@
     clearRoute() {
       this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
       $("turns").hidden = true;
-      this.shown = null;
+      this.shown = null; this._handoff = null; this._profCur = null;
       $("result").hidden = true; $("prof").hidden = true; $("delta").textContent = ""; $("slpos").textContent = "";
       $("share").hidden = true; $("sharebox").hidden = true;
       $("sl").disabled = false;
@@ -612,27 +786,33 @@
       return clamp(Math.round(t * (n - 1)), 0, n - 1);
     },
 
-    drawFamily() {
+    drawFamily(fade) {
       this.familyLayer.clearLayers();
-      for (const u of this.family.unique) {
-        L.polyline(u.latlngs, { color: css("--family"), weight: 2, opacity: 0.45, interactive: false,
-          lineJoin: "round", lineCap: "round" }).addTo(this.familyLayer);
-      }
+      const lines = this.family.unique.map((u) =>
+        L.polyline(u.latlngs, { color: css("--family"), weight: 2, opacity: fade ? 0 : 0.45, interactive: false,
+          lineJoin: "round", lineCap: "round" }).addTo(this.familyLayer));
+      if (fade) fadeIn(lines.map((l) => [l, 0.45]), 260);
     },
 
     /* show the family member for the current slider position */
     show(immediate) {
       if (!this.family) return;
-      const t = this.state.t, step = this.stepAt(t), n = this.family.unique.length;
+      const loop = !!this.family.loop;
+      const t = this.state.t, n = this.family.unique.length;
+      const step = loop ? clamp(this.state.loopIdx, 0, n - 1) : this.stepAt(t);
       const u = this.family.unique[step];
-      const colour = ramp(t);
-      $("slpos").textContent = this.family.partial ? "" : (n === 1 ? "" : (step + 1) + " of " + n);
+      const colour = loop ? css("--route") : ramp(t);
+      $("slpos").textContent = loop ? fmtLoop(this.state.loopMi)
+        : (this.family.partial ? "" : (n === 1 ? "" : (step + 1) + " of " + n));
       const prev = this.shown;
       if (prev === u) { this.tintRoute(colour); return; }
       this.shown = u;
-      this.drawRoute(u, colour, prev && !immediate ? prev : null);
-      this.drawStats(u, prev && !immediate ? prev : u);
-      this.animateProfile(prev && !immediate ? prev : u, u);
+      // after a scan the profile and stats carry on from where it left them
+      const hand = this._handoff; this._handoff = null;
+      const from = hand || (prev && !immediate ? prev : null);
+      this.drawRoute(u, colour, prev && !immediate ? prev : null, !!hand);
+      this.drawStats(u, from || u);
+      this.animateProfile(from || u, u, 300, hand ? { range: { from: hand.range, to: rangeOf(this.family.unique) } } : {});
     },
 
     tintRoute(colour) {
@@ -641,7 +821,7 @@
       if (this.shown) this.drawProfile(this.shown, this.shown, 1);
     },
 
-    drawRoute(u, colour, prev) {
+    drawRoute(u, colour, prev, fade) {
       // crossfade: the old line fades out while the new one fades in
       const casing = css("--route-casing");
       if (this._line && prev) {
@@ -650,11 +830,12 @@
       } else {
         this.routeLayer.clearLayers();
       }
-      this._casing = L.polyline(u.latlngs, { color: casing, weight: 10, opacity: prev ? 0 : 0.9, interactive: false,
+      fade = fade || !!prev;
+      this._casing = L.polyline(u.latlngs, { color: casing, weight: 10, opacity: fade ? 0 : 0.9, interactive: false,
         lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
-      this._line = L.polyline(u.latlngs, { color: colour, weight: 5, opacity: prev ? 0 : 1, interactive: false,
+      this._line = L.polyline(u.latlngs, { color: colour, weight: 5, opacity: fade ? 0 : 1, interactive: false,
         lineJoin: "round", lineCap: "round" }).addTo(this.routeLayer);
-      if (prev) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
+      if (fade) fadeIn([[this._casing, 0.9], [this._line, 1]], 260);
       this._casing.bringToFront(); this._line.bringToFront();
       $("prof").dataset.colour = colour;
       this.labelRoute(u);
@@ -726,7 +907,7 @@
     },
 
     drawStats(u, prevU) {
-      $("result").hidden = false;
+      showSoft($("result"));
       const runs = this.runs(u, 60);
       const box = $("turns");
       box.innerHTML = "";
@@ -746,19 +927,20 @@
         }
       };
       render(false);
-      box.hidden = runs.length === 0;
+      if (runs.length) showSoft(box); else hideSoft(box);
       const s = u.stats, p = prevU.stats;
       tween(260, (k) => {
         $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
         $("v_climb").innerHTML = fmtFt(lerp(p.elev_gain_m, s.elev_gain_m, k));
-        $("v_grade").innerHTML = fmtPct(lerp(p.max_grade, s.max_grade, k));
+        $("v_grade").innerHTML = fmtPct(lerp(p.steepest, s.steepest, k));
       });
+      if (this.family.loop) { this.drawLoopDelta(u); return; }
       const sh = this.family.shortest.stats;
       if (u === this.family.shortest) {
-        $("delta").innerHTML = this.family.unique.length > 1
+        setText($("delta"), this.family.unique.length > 1
           ? (this.calm() ? "The shortest route on calm streets. Slide right to trade distance for less climbing."
             : "The shortest route. Slide right to trade distance for less climbing.")
-          : "Shortest and flattest at once.";
+          : "Shortest and flattest at once.", true);
       } else {
         const dd = s.distance_m - sh.distance_m, dc = sh.elev_gain_m - s.elev_gain_m;
         const pd = sh.distance_m ? Math.round(100 * dd / sh.distance_m) : 0;
@@ -767,24 +949,64 @@
           : "<b class='up'>+" + (dd / MI).toFixed(1) + " mi</b> (" + pd + "% longer)";
         const less = dc <= 0 ? "no less climbing"
           : "<b class='down'>−" + Math.round(dc * FT).toLocaleString() + " ft</b> of climbing (" + pc + "% less)";
-        $("delta").innerHTML = "vs. shortest: " + longer + ", " + less;
+        setText($("delta"), "vs. shortest: " + longer + ", " + less, true);
       }
     },
 
+    /* under the stats: how this loop compares with a typical loop of the
+     * same length from the same start, and a way to see the next-best one */
+    drawLoopDelta(u) {
+      const f = this.family, s = u.stats, box = $("delta");
+      const med = f.medianGain, idx = f.unique.indexOf(u), n = f.unique.length;
+      let html;
+      const ob = u.kind === "outback" ? "Out and back. " : "";
+      if (f.shortfall) html = ob + "The longest loop that fits from here.";
+      else if (Number.isFinite(med) && med - s.elev_gain_m >= 3 && f.tried >= 5) {
+        html = ob + "<b class='down'>−" + Math.round((med - s.elev_gain_m) * FT).toLocaleString()
+          + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
+      } else html = ob + "About as flat as loops from here get.";
+      swapText(box, (el) => {
+        el.innerHTML = html;
+        if (n > 1) {
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "link"; b.id = "nextloop";
+          b.textContent = "Another loop (" + (idx + 1) + " of " + n + ")";
+          b.addEventListener("click", () => {
+            this.state.loopIdx = (idx + 1) % n;
+            this.show(false);
+            if (!this.inView() || this.viewShare() < 0.35) this.fit();
+            this.writeHash();
+          });
+          el.append(" ", b);
+        }
+      });
+    },
+
     /* ------------------------------------------------------------ profile */
-    animateProfile(a, b) {
-      $("prof").hidden = false;
+    /* morph the profile from a to b; opts.range eases the vertical scale
+     * between two {min, max} ranges, opts.stats carries the numbers along,
+     * opts.done runs when the morph completes (not when it is cut short) */
+    animateProfile(a, b, ms = 300, opts = {}) {
+      const cv = $("prof");
+      if (cv.hidden) { cv.hidden = false; cv.classList.add("fading"); void cv.offsetWidth; cv.classList.remove("fading"); }
       if (this._profAnim) cancelAnimationFrame(this._profAnim);
       const t0 = performance.now();
       const frame = (now) => {
-        const k = clamp((now - t0) / 300, 0, 1);
-        this.drawProfile(a, b, ease(k));
+        const k = (opts.ease || ease)(clamp((now - t0) / ms, 0, 1));
+        this.drawProfile(a, b, k, opts.range);
+        if (opts.stats) {
+          const p = a.stats, s = b.stats;
+          $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
+          $("v_climb").innerHTML = fmtFt(lerp(p.elev_gain_m, s.elev_gain_m, k));
+          $("v_grade").innerHTML = fmtPct(lerp(p.steepest, s.steepest, k));
+        }
         if (k < 1) this._profAnim = requestAnimationFrame(frame);
+        else { this._profAnim = null; if (opts.done) opts.done(); }
       };
       this._profAnim = requestAnimationFrame(frame);
     },
 
-    drawProfile(a, b, k) {
+    drawProfile(a, b, k, range) {
       const cv = $("prof"), dpr = window.devicePixelRatio || 1;
       const W = cv.clientWidth || 360, H = cv.clientHeight || 92;
       if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
@@ -795,9 +1017,15 @@
       const z = new Float64Array(n);
       for (let i = 0; i < n; i++) z[i] = lerp(a.profile.z[i], b.profile.z[i], k);
       const dist = lerp(a.stats.distance_m, b.stats.distance_m, k);
-      // a fixed vertical scale across the family keeps the hills comparable
-      let zmin = Infinity, zmax = -Infinity;
-      for (const u of this.family.unique) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+      // a fixed vertical scale across the family keeps the hills comparable;
+      // a morph that changes scale (the scan, or coming out of it) eases it
+      let zmin, zmax;
+      if (range) { zmin = lerp(range.from.min, range.to.min, k); zmax = lerp(range.from.max, range.to.max, k); }
+      else ({ min: zmin, max: zmax } = rangeOf(this.family ? this.family.unique : [a, b]));
+      // what is on the canvas right now, so another morph can start from it
+      this._profCur = { profile: { z }, range: { min: zmin, max: zmax }, stats: {
+        distance_m: dist, elev_gain_m: lerp(a.stats.elev_gain_m, b.stats.elev_gain_m, k),
+        steepest: lerp(a.stats.steepest, b.stats.steepest, k) } };
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
       const padL = 6, padR = 6, top = 8, bottom = 18;
@@ -827,9 +1055,13 @@
       }
     },
 
+    /* what the map is fitted to: the whole frontier between two places
+     * (its routes share the ends), but only the loop on show, since the
+     * other loops offered can lie in any direction from the start */
     familyBounds() {
       const b = L.latLngBounds([]);
-      for (const u of this.family.unique) for (const ll of u.latlngs) b.extend(ll);
+      const members = this.family.loop && this.shown ? [this.shown] : this.family.unique;
+      for (const u of members) for (const ll of u.latlngs) b.extend(ll);
       return b;
     },
     /* is the whole family inside the part of the map the card does not cover? */
@@ -842,15 +1074,52 @@
       const x0 = wide ? card.right + 16 : 16, y1 = wide ? size.y - 16 : card.top - 16;
       return sw.x >= x0 && ne.x <= size.x - 16 && ne.y >= 16 && sw.y <= y1;
     },
+    /* how much of the uncovered map the family spans, in its larger
+     * direction (1 = edge to edge) */
+    viewShare() {
+      if (!this.family) return 1;
+      const map = this.map, size = map.getSize(), card = $("card").getBoundingClientRect();
+      const b = this.familyBounds();
+      const sw = map.latLngToContainerPoint(b.getSouthWest()), ne = map.latLngToContainerPoint(b.getNorthEast());
+      const wide = size.x > 640;
+      const w = wide ? size.x - card.right - 32 : size.x - 32, h = wide ? size.y - 32 : card.top - 32;
+      return Math.max((ne.x - sw.x) / Math.max(w, 1), (sw.y - ne.y) / Math.max(h, 1));
+    },
     fit() {
       if (!this.family) return;
       const b = this.familyBounds();
       const size = this.map.getSize();
       const wide = size.x > 640;
       const card = $("card").getBoundingClientRect();
+      // generous margins that grow with the window: a long straight run
+      // that reaches the edge reads as cut off; the zoom control sits
+      // bottom right
+      const my = Math.max(56, Math.round(size.y * 0.12)), mx = Math.max(64, Math.round(size.x * 0.06));
       this.map.fitBounds(b, wide
-        ? { paddingTopLeft: [card.right + 24, 24], paddingBottomRight: [40, 40], maxZoom: 15 }
-        : { paddingTopLeft: [16, 16], paddingBottomRight: [16, card.height + 16], maxZoom: 15 });
+        ? { paddingTopLeft: [card.right + mx, my], paddingBottomRight: [mx, my + 16], maxZoom: 15 }
+        : { paddingTopLeft: [28, Math.max(36, Math.round(size.y * 0.12))], paddingBottomRight: [28, this.cardHeight() + 28], maxZoom: 15 });
+    },
+    /* the height the card is about to have: blocks easing open or shut
+     * carry their target height inline, so the bottom sheet's final size
+     * is known before the easing ends and the map can be fitted to it */
+    cardHeight() {
+      const card = $("card");
+      // while typing on a phone the card is folded to the fields; measure it
+      // as it will be once the result shows
+      const typing = card.classList.contains("typing");
+      if (typing) card.classList.remove("typing");
+      let h = card.getBoundingClientRect().height;
+      if (typing) card.classList.add("typing");
+      for (const el of card.querySelectorAll("[style]")) {
+        if (el.style.height) h += parseFloat(el.style.height) - el.getBoundingClientRect().height;
+        if (el.style.marginTop) h += parseFloat(el.style.marginTop) - parseFloat(getComputedStyle(el).marginTop);
+      }
+      // the card's max-height is a share of the viewport, which the map
+      // fills (its parent may be an unsized wrapper when the page is embedded)
+      const max = getComputedStyle(card).maxHeight;
+      if (max.endsWith("%")) h = Math.min(h, this.map.getSize().y * parseFloat(max) / 100);
+      else if (max.endsWith("px")) h = Math.min(h, parseFloat(max));
+      return h;
     },
 
     /* ------------------------------------------------------------ sharing */
@@ -860,12 +1129,14 @@
     token() {
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
+      const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
+      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "o" : ""), String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
       return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
     writeHash() {
       const { from, to } = this.state;
-      if (!from || !to) return;
+      if (!from || (!to && !this.state.loop)) return;
       try { history.replaceState(null, "", "#" + this.token()); } catch (e) { /* sandboxed */ }
     },
     shareUrl() {
@@ -878,6 +1149,7 @@
       try { h = location.hash; } catch (e) { return false; }
       if (!h || h.length < 2) return false;
       const parts = h.slice(1).split("~");
+      if (parts[0] === "l" && parts.length >= 6) return this.readLoopHash(parts);
       if (parts[0] !== "t" || parts.length < 8) return false;
       const nums = parts.slice(1, 5).map(Number);
       if (nums.some((v) => !Number.isFinite(v))) return false;
@@ -894,7 +1166,30 @@
       this.setPoint("to", this.pointAt(nums[2], nums[3], decLabel(parts[8] || "") || undefined), false);
       return true;
     },
+    /* #l~lon~lat~mode~miles~which~label (mode ending in o: out-and-back allowed) */
+    readLoopHash(parts) {
+      const lon = +parts[1], lat = +parts[2], mi = +parts[4];
+      if (![lon, lat, mi].every(Number.isFinite)) return false;
+      let m = parts[3] || "w";
+      if (m.endsWith("o")) { m = m.slice(0, -1); this.state.outBack = true; $("outback").checked = true; }
+      this.setMode(m);
+      this.state.loopMi = clamp(Math.round(mi / LOOP_STEP_MI) * LOOP_STEP_MI, LOOP_MIN_MI, LOOP_MAX_MI);
+      this.setPoint("from", this.pointAt(lon, lat, decLabel(parts[6] || "") || undefined), false);
+      this.setLoop(true, false);
+      this._pendingLoopIdx = Math.max(0, parseInt(parts[5], 10) || 0);
+      return true;
+    },
+    setMode(tok) {
+      if (tok !== "b" && tok !== "bx") return;
+      this.state.mode = "bike";
+      this.state.calm = tok === "b";
+      $("calm").checked = this.state.calm;
+      $("calmrow").hidden = false;
+      for (const b of $("mode").querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.v === "bike" ? "true" : "false");
+    },
   };
+
+  function fmtLoop(mi) { return (Number.isInteger(mi) ? mi : mi.toFixed(1)) + " mi loop"; }
 
   function encLabel(s) {
     let out = "";
@@ -966,6 +1261,85 @@
   }
   function fadeIn(pairs, ms) {
     tween(ms, (k) => { pairs.forEach(([l, o]) => l.setStyle({ opacity: o * k })); });
+  }
+  /* the elevation range of some profiles, optionally grown from a range */
+  function rangeOf(members, from) {
+    let min = from ? from.min : Infinity, max = from ? from.max : -Infinity;
+    for (const u of members) for (const v of u.profile.z) { if (v < min) min = v; if (v > max) max = v; }
+    return { min, max };
+  }
+  /* Text changes crossfade rather than jump: the element fades out, the
+   * new content (a string, or a function that fills the element) goes in,
+   * and it fades back.  Calls during a fade coalesce into the latest. */
+  function swapText(el, fill) {
+    if (typeof fill !== "function" && el.textContent === fill && !el._swap) return;
+    el._swap = typeof fill === "function" ? () => fill(el) : () => { el.textContent = fill; };
+    if (el._swapTimer) return;
+    if (!el.textContent && !el.children.length) { el._swap(); el._swap = null; return; }
+    el.classList.add("fading");
+    el._swapTimer = setTimeout(() => {
+      el._swapTimer = null;
+      const f = el._swap; el._swap = null; if (f) settle(el, f);
+      el.classList.remove("fading");
+    }, FADE_MS);
+  }
+  /* run a change to an element's content, easing its height between
+   * what it was and what it has become so the blocks below slide */
+  function settle(el, change) {
+    const h0 = el.offsetHeight;
+    change();
+    const h1 = el.offsetHeight;
+    if (h0 === h1 || reducedMotion()) return;
+    el.style.transition = "none"; el.style.height = h0 + "px"; el.style.overflow = "hidden";
+    void el.offsetWidth;
+    el.style.transition = ""; el.style.height = h1 + "px";
+    clearTimeout(el._growTimer);
+    el._growTimer = setTimeout(() => { el.style.height = ""; el.style.overflow = ""; }, GROW_MS + 20);
+  }
+  function reducedMotion() { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  /* and set content without a fade (a counter, the slider); a fade in
+   * flight just picks up the latest value instead */
+  function setText(el, value, html) {
+    const apply = () => { if (html) el.innerHTML = value; else el.textContent = value; };
+    if (el._swapTimer) el._swap = apply; else apply();
+  }
+  /* hide and show blocks with the same fade, their space closing and
+   * opening (the card's gap included) rather than snapping */
+  function hideSoft(el) {
+    if (el.hidden || el._hiding) return;
+    el._hiding = true; el.classList.add("fading");
+    setTimeout(() => {
+      if (!el._hiding) return;                 // shown again meanwhile
+      el.style.transition = "none"; el.style.height = el.offsetHeight + "px"; el.style.overflow = "hidden";
+      void el.offsetWidth;
+      el.style.transition = ""; el.style.height = "0px"; el.style.marginTop = "-10px";
+      clearTimeout(el._growTimer);
+      el._growTimer = setTimeout(() => {
+        if (!el._hiding) return;
+        el.hidden = true; el._hiding = false; el.classList.remove("fading");
+        el.style.height = ""; el.style.marginTop = ""; el.style.overflow = "";
+      }, GROW_MS + 20);
+    }, reducedMotion() ? 0 : FADE_MS);
+  }
+  function showSoft(el) {
+    const wasHiding = el._hiding; el._hiding = false;
+    if (!el.hidden && !wasHiding && !el.classList.contains("fading")) return;
+    clearTimeout(el._growTimer);
+    if (el.hidden || wasHiding) {
+      // open from whatever height it has now (0 when hidden) to its full height
+      const h0 = el.hidden ? 0 : el.offsetHeight;
+      el.hidden = false; el.classList.add("fading");
+      el.style.transition = "none"; el.style.height = ""; el.style.marginTop = ""; el.style.overflow = "hidden";
+      const h1 = el.offsetHeight;
+      el.style.height = h0 + "px"; if (h0 === 0) el.style.marginTop = "-10px";
+      void el.offsetWidth;
+      el.style.transition = ""; el.style.height = h1 + "px"; el.style.marginTop = "";
+      el._growTimer = setTimeout(() => { el.style.height = ""; el.style.overflow = ""; el.classList.remove("fading"); }, GROW_MS);
+      return;
+    }
+    el.classList.add("fading"); el.hidden = false;
+    void el.offsetWidth;                       // flush, so the fade-in runs
+    el.classList.remove("fading");
   }
 
   App.ALPHA_MAX = ALPHA_MAX; App._gen = 0;
