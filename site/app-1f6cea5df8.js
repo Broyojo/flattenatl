@@ -358,15 +358,23 @@ class Graph {
    * marked in pen cost (1 + penK) times as much, which is how a loop's way
    * home is pushed off the streets it went out on. len and gain carry the
    * real length and climbing (m) of each tree path. */
-  tree(src, mode, cost, { reverse = false, target = -1, pen = null, penNode = null, penK = 0 } = {}) {
+  tree(src, mode, cost, { reverse = false, target = -1, pen = null, penNode = null, penK = 0, minPerM = 0 } = {}) {
     const n = this.n, bit = this.modeBit(mode), rev = reverse ? this.reverse() : null;
     const dist = new Float64Array(n).fill(Infinity), prev = new Int32Array(n).fill(-1);
     const done = new Uint8Array(n), len = new Float64Array(n), gain = new Float64Array(n);
     const heap = new MinHeap();
-    dist[src] = 0; heap.push(0, src);
+    // with a target and a known floor on cost per metre (minPerM), the
+    // search is A*: straight-line distance to the target times that floor
+    // never overestimates, so the route found is still the cheapest
+    const astar = target >= 0 && minPerM > 0;
+    const cosT = Math.cos(this.nodeLat(src) * Math.PI / 180);
+    const tx = astar ? this.nodeLon(target) * 111320 * cosT : 0, ty = astar ? this.nodeLat(target) * 110540 : 0;
+    const h = astar ? (v) => minPerM * Math.hypot(this.nodeLon(v) * 111320 * cosT - tx, this.nodeLat(v) * 110540 - ty) : () => 0;
+    dist[src] = 0; heap.push(h(src), src);
     while (heap.n > 0) {
-      const u = heap.pop(), du = heap.topKey;
-      if (done[u] || du > dist[u]) continue;
+      const u = heap.pop();
+      if (done[u]) continue;
+      const du = dist[u];
       done[u] = 1;
       if (u === target) break;
       const lo = reverse ? rev.indptr[u] : this.indptr[u], hi = reverse ? rev.indptr[u + 1] : this.indptr[u + 1];
@@ -378,7 +386,7 @@ class Graph {
         if ((pen !== null && pen[this.arcEdge[a]]) || (penNode !== null && penNode[v])) c *= 1 + penK;
         const nd = du + c;
         if (nd < dist[v]) {
-          dist[v] = nd; prev[v] = a; heap.push(nd, v);
+          dist[v] = nd; prev[v] = a; heap.push(nd + h(v), v);
           len[v] = len[u] + this.arcLen[a] / this.DM; gain[v] = gain[u] + this.arcGain[a] / this.CM;
         }
       }
@@ -449,16 +457,23 @@ class Graph {
    * are ranked by climbing, length breaking ties.
    *
    * Like pareto(), it returns a search object; step(budgetMs) until done.
+   * search.last is the most recent well-shaped loop built, so the page can
+   * show the scan as it happens.
    * Results: search.loops (best first, mutually distinct) and
    * search.accepted (every loop that met the length and overlap tests). */
-  loops(src, mode, { targetM, alpha = 30, stress = false, sectors = 18, tol = 0.12,
-    maxOverlap = 0.3, penK = 3, keep = 3, nearM = 110, perArc = 8, minRound = 0.2 } = {}) {
+  loops(src, mode, { targetM, alpha = 30, stress = false, sectors = 24, tol = 0.12,
+    maxOverlap = 0.3, penK = 3, keep = 3, nearM = 110, perArc = 8, minRound = 0.2,
+    tolM = 0.25 * 1609.344, retries = 3 } = {}) {
     const g = this, T = targetM, L = g.lengths(stress);
     // a few metres per arc keeps routes off zigzags through tiny segments
     const cost = new Float64Array(g.m);
     for (let a = 0; a < g.m; a++) cost[a] = L[a] / g.DM + alpha * g.arcGain[a] / g.CM + perArc;
-    const search = { loops: [], accepted: [], all: [], tried: 0, done: false, ms: 0, shortfall: false };
+    const search = { loops: [], accepted: [], loose: [], all: [], tried: 0, done: false, ms: 0, shortfall: false };
+    // a loop counts when it is within tolM of the target (or tol of it, if
+    // that is tighter, for short loops); corners are rescaled up to
+    // `retries` times to land in that window
     const t0 = performance.now();
+    const band = Math.min(tol * T, tolM);
     let F = null, B = null, bySector = null;
     const jobs = [];
     const cosLat = Math.cos(g.nodeLat(src) * Math.PI / 180);
@@ -478,8 +493,12 @@ class Graph {
       }
       return best;
     };
+    // cost per metre is never below the shortest-looking length factor
+    // (0.8 on a protected lane in calm-streets mode), less a little for the
+    // quantised lengths: the floor that keeps A* exact
+    const minPerM = stress ? 0.78 : 0.98;
     const leg = (from, to, pen, penNode) => {
-      const t = g.tree(from, mode, cost, { target: to, pen, penNode, penK });
+      const t = g.tree(from, mode, cost, { target: to, pen, penNode, penK, minPerM });
       return t.done[to] ? g.treePath(t, to) : null;
     };
     const mark = (pen, arcs) => { for (const a of arcs) pen[g.arcEdge[a]] = 1; };
@@ -489,29 +508,21 @@ class Graph {
     const XM = 111320 * Math.cos(g.nodeLat(src) * Math.PI / 180), YM = 110540;
     const px = (v) => g.nodeLon(v) * XM, py = (v) => g.nodeLat(v) * YM;
     const sx = px(src), sy = py(src);
+    let nodeGrid = null;   // cell -> nodes, over every corner the loops can reach
+    const cellKey = (cx, cy) => cx * 100003 + cy;
     const markNear = (penNode, arcs) => {
-      const cell = nearM, grid = new Map();
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (const a of arcs) {
-        const v = g.head[a], x = px(v), y = py(v);
-        const k = Math.floor(x / cell) + ":" + Math.floor(y / cell);
-        if (!grid.has(k)) grid.set(k, []);
-        grid.get(k).push(x, y);
-        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
       const r2 = nearM * nearM, home2 = (1.5 * nearM) ** 2;
-      for (let v = 0; v < g.n; v++) {
-        if (!F.done[v]) continue;
-        const x = px(v), y = py(v);
-        if (x < x0 - nearM || x > x1 + nearM || y < y0 - nearM || y > y1 + nearM) continue;
-        if ((x - sx) ** 2 + (y - sy) ** 2 < home2) continue;
-        const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
-        let hit = false;
-        for (let i = -1; i <= 1 && !hit; i++) for (let j = -1; j <= 1 && !hit; j++) {
-          const pts = grid.get((cx + i) + ":" + (cy + j)); if (!pts) continue;
-          for (let k = 0; k < pts.length; k += 2) if ((pts[k] - x) ** 2 + (pts[k + 1] - y) ** 2 < r2) { hit = true; break; }
+      for (const a of arcs) {
+        const v0 = g.head[a], x0 = px(v0), y0 = py(v0);
+        const cx = Math.floor(x0 / nearM), cy = Math.floor(y0 / nearM);
+        for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+          const cell = nodeGrid.get(cellKey(cx + i, cy + j)); if (!cell) continue;
+          for (const v of cell) {
+            if (penNode[v]) continue;
+            const x = px(v), y = py(v);
+            if ((x - x0) ** 2 + (y - y0) ** 2 < r2 && (x - sx) ** 2 + (y - sy) ** 2 >= home2) penNode[v] = 1;
+          }
         }
-        if (hit) penNode[v] = 1;
       }
     };
     const measure = (arcs) => {
@@ -533,11 +544,12 @@ class Graph {
       const m = measure(arcs);
       const r = { arcs, length: m.len, gain: m.gain, overlap: m.overlap, round: m.round, kind };
       const shaped = m.overlap <= maxOverlap && m.round >= minRound;
-      if (shaped) search.all.push(r);
-      if (shaped && Math.abs(m.len - T) <= tol * T) search.accepted.push(r);
+      if (shaped) { search.all.push(r); search.last = r; }
+      if (shaped && Math.abs(m.len - T) <= band) search.accepted.push(r);
+      else if (shaped && Math.abs(m.len - T) <= tol * T) search.loose.push(r);
       return r;
     };
-    const petal = (s, want, retry) => {
+    const petal = (s, want, tries) => {
       const w = pick(s, want, Math.max(150, 0.06 * T), true);
       if (w < 0) return;
       const out = g.treePath(F, w); if (!out) return;
@@ -545,13 +557,13 @@ class Graph {
       mark(pen, out); markNear(penNode, out);
       const back = leg(w, src, pen, penNode); if (!back) return;
       const r = consider(out.concat(back), "petal");
-      if (r && retry && Math.abs(r.length - T) > tol * T) {
-        jobs.push(() => petal(s, want * T / r.length, false));
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => petal(s, want * T / r.length, tries - 1));
       }
     };
     // out to the first corner, across each next one, then home; every leg
     // avoids the streets the loop has already used
-    const polygon = (ss, want, retry) => {
+    const polygon = (ss, want, tries) => {
       const sp = Math.max(150, 0.06 * T);
       const vs = ss.map((s, i) => pick(s, want, sp, i === ss.length - 1));
       if (vs.some((v) => v < 0) || new Set(vs).size < vs.length) return;
@@ -563,8 +575,8 @@ class Graph {
         mark(pen, l); markNear(penNode, l); arcs = arcs.concat(l);
       }
       const r = consider(arcs, vs.length === 2 ? "triangle" : "polygon");
-      if (r && retry && Math.abs(r.length - T) > tol * T) {
-        jobs.push(() => polygon(ss, want * T / r.length, false));
+      if (r && tries > 0 && Math.abs(r.length - T) > band) {
+        jobs.push(() => polygon(ss, want * T / r.length, tries - 1));
       }
     };
     search.step = (budgetMs = 30) => {
@@ -574,20 +586,30 @@ class Graph {
         B = g.tree(src, mode, cost, { reverse: true });
         bySector = Array.from({ length: sectors }, () => []);
         const corner = g.corners(mode);
+        nodeGrid = new Map();
+        for (let v = 0; v < g.n; v++) {
+          if (!F.done[v] || F.len[v] > 0.75 * T) continue;
+          const k = cellKey(Math.floor(px(v) / nearM), Math.floor(py(v) / nearM));
+          let c = nodeGrid.get(k); if (!c) nodeGrid.set(k, c = []); c.push(v);
+        }
         for (let v = 0; v < g.n; v++) {
           if (!F.done[v] || !B.done[v] || v === src || !corner[v]) continue;
           const lf = F.len[v];
           if (lf < 0.1 * T || lf > 0.7 * T) continue;
           bySector[sectorOf(v)].push(v);
         }
-        for (let s = 0; s < sectors; s++) jobs.push(() => petal(s, 0.42 * T, true));
-        const gap = Math.max(1, Math.round(sectors / 6));
-        for (let s = 0; s < sectors; s++) jobs.push(() => polygon([s, (s + gap) % sectors], 0.3 * T, true));
+        for (let s = 0; s < sectors; s++) {
+          jobs.push(() => petal(s, 0.38 * T, retries));
+          jobs.push(() => petal(s, 0.46 * T, retries));
+        }
+        for (const gap of [Math.round(sectors / 6), Math.round(sectors / 4)]) {
+          for (let s = 0; s < sectors; s++) jobs.push(() => polygon([s, (s + gap) % sectors], (gap > sectors / 5 ? 0.27 : 0.3) * T, retries));
+        }
         // longer loops: three corners a quarter turn apart, which keeps the
         // loop inside the city where two far corners would fall in the bay
         if (T > 8000) {
           const q = Math.max(1, Math.round(sectors / 4));
-          for (let s = 0; s < sectors; s += 2) jobs.push(() => polygon([s, (s + q) % sectors, (s + 2 * q) % sectors], 0.21 * T, true));
+          for (let s = 0; s < sectors; s++) jobs.push(() => polygon([s, (s + q) % sectors, (s + 2 * q) % sectors], 0.21 * T, retries));
         }
         if (performance.now() - start > budgetMs) return false;
       }
@@ -599,6 +621,9 @@ class Graph {
       // nothing came close enough to the target (a long loop from the edge
       // of the city), offer the loop that came closest, and say so.
       let pool = search.accepted.slice();
+      if (!pool.length && search.loose.length) {
+        pool = search.loose.slice(); search.shortfall = true;
+      }
       if (!pool.length && search.all.length) {
         const closest = search.all.slice().sort((x, y) => Math.abs(x.length - T) - Math.abs(y.length - T))[0];
         pool = [closest]; search.shortfall = true;
@@ -784,7 +809,7 @@ class Graph {
 
   /* Aggregate a route exactly as routing.summarise_route does. */
   summarise(arcs) {
-    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0, stressed = 0;
+    let dist = 0, gain = 0, loss = 0, maxg = -Infinity, wgrade = 0, stressed = 0, steep = 0;
     const th = new Array(this.th.length).fill(0);
     for (const a of arcs) {
       const L = this.arcLen[a] / this.DM;
@@ -794,13 +819,19 @@ class Graph {
       loss += this.arcLoss[a] / this.CM;
       const g = this.arcMaxGrade[a] / this.GRADE;
       if (g > maxg) maxg = g;
+      // the steepest figure the route page shows: over a block shorter than
+      // 15 m a peak grade is lidar noise (a 3 m stub at Cesar Chavez reads
+      // 45%), so there the block's average climb stands in, as the analysis
+      // does for its gradient tests (config.MIN_RELIABLE_GRADE_LENGTH_M)
+      const sg = L >= 15 ? g : Math.max(0, (this.arcGain[a] - this.arcLoss[a]) / this.CM / Math.max(L, 1e-6));
+      if (sg > steep) steep = sg;
       wgrade += (this.arcMeanGrade[a] / this.GRADE) * L;
       for (let k = 0; k < th.length; k++) th[k] += this.th[k][a] / this.DM;
     }
     if (!arcs.length) maxg = 0;
     const prof = this.profile(arcs);
     return {
-      distance_m: dist, stress_m: stressed, elev_gain_m: gain, elev_loss_m: loss,
+      distance_m: dist, stress_m: stressed, elev_gain_m: gain, elev_loss_m: loss, steepest: steep,
       max_grade: maxg, avg_abs_grade: dist > 0 ? wgrade / dist : 0,
       thresholds: th, n_edges: arcs.length,
       start_elev_m: prof.z.length ? prof.z[0] : 0,
@@ -1335,6 +1366,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       map.on("zoomend", () => { if (this._labelled) this.labelRoute(this._labelled); });
 
       this.familyLayer = L.layerGroup().addTo(map);
+      this.scanLayer = L.layerGroup().addTo(map);
       this.routeLayer = L.layerGroup().addTo(map);
       this.markers = L.layerGroup().addTo(map);
       this.labelLayer = L.layerGroup().addTo(map);
@@ -1554,12 +1586,19 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         return;
       }
       const g = this.graph;
-      $("status").textContent = "Finding the flattest " + fmtLoop(loopMi) + "…";
+      $("status").textContent = "Trying loops…";
       $("slpos").textContent = fmtLoop(loopMi);
       const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm() });
+      this.scanStart(from, loopMi * MI);
       const run = () => {
         if (gen !== this._gen) return;
-        if (!search.step(30)) { setTimeout(run, 0); return; }
+        if (!search.step(30)) {
+          if (search.last && search.last !== this._scan.last) this.scanShow(search.last);
+          $("status").textContent = "Trying loops… " + search.tried;
+          setTimeout(run, 0);
+          return;
+        }
+        this.scanEnd();
         if (!search.loops.length) {
           this.clearRoute();
           $("status").textContent = "No loop from here. Try another start.";
@@ -1575,7 +1614,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.shown = null;
         $("status").textContent = search.shortfall
           ? "No " + fmtLoop(loopMi) + " fits here; this is the closest."
-          : "The flattest of " + search.accepted.length + " loops tried.";
+          : "The flattest of " + search.tried + " loops tried.";
         this.drawFamily();
         this.show(true);
         // a loop that spills out of view, or has shrunk to a small part of
@@ -1587,8 +1626,55 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       setTimeout(run, 0);
     },
 
+    /* The scan: while the loop search runs, each loop it tries flashes on
+     * the map (the last few fade out behind it), the profile morphs from
+     * one to the next and the stats follow, so the search reads as a sweep
+     * around the start rather than a wait. */
+    scanStart(from, targetM) {
+      this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
+      this.scanLayer.clearLayers();
+      this._line = null; this._labelled = null; this.shown = null;
+      $("turns").hidden = true;
+      $("delta").textContent = "Trying loops of about " + fmtLoop(targetM / MI).replace(" loop", "") + " in every direction…";
+      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity };
+      // frame the area the loops will cover before they start appearing
+      const r = targetM / 5, dLat = r / 110540, dLon = r / (111320 * Math.cos(from.lat * Math.PI / 180));
+      const area = L.latLngBounds([from.lat - dLat, from.lon - dLon], [from.lat + dLat, from.lon + dLon]);
+      const fake = { unique: [{ latlngs: [area.getSouthWest(), area.getNorthEast()] }] };
+      const keep = this.family; this.family = fake;
+      if (!this.inView() || this.viewShare() < 0.35) this.fit();
+      this.family = keep;
+    },
+    scanShow(r) {
+      const g = this.graph, sc = this._scan;
+      sc.last = r;
+      const s = g.summarise(r.arcs);
+      const m = { latlngs: g.geometry(r.arcs, this.geom), profile: resample(s.profile, 160), stats: s };
+      for (const z of m.profile.z) { if (z < sc.zmin) sc.zmin = z; if (z > sc.zmax) sc.zmax = z; }
+      const line = L.polyline(m.latlngs, { color: css("--route"), weight: 3, opacity: 0.85, interactive: false,
+        lineJoin: "round", lineCap: "round" }).addTo(this.scanLayer);
+      sc.lines.unshift(line);
+      const fades = [0.85, 0.4, 0.22, 0.12, 0.06];
+      sc.lines.forEach((l, i) => { if (i < fades.length) l.setStyle({ opacity: fades[i], weight: i ? 2 : 3 }); });
+      while (sc.lines.length > fades.length) this.scanLayer.removeLayer(sc.lines.pop());
+      $("result").hidden = false;
+      $("v_dist").innerHTML = fmtMi(s.distance_m);
+      $("v_climb").innerHTML = fmtFt(s.elev_gain_m);
+      $("v_grade").innerHTML = fmtPct(s.steepest);
+      $("prof").dataset.colour = css("--route");
+      const from = sc.prev || m;
+      sc.prev = m;
+      this.animateProfile(from, m, 140);
+    },
+    scanEnd() {
+      if (!this._scan) return;
+      this.scanLayer.clearLayers();
+      this._scan = null;
+    },
+
     recompute(fit) {
       if (this.state.loop) return this.recomputeLoop(fit);
+      this.scanEnd();
       const { from, to, mode } = this.state;
       this.family = null;
       const gen = ++this._gen;
@@ -1832,7 +1918,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       tween(260, (k) => {
         $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
         $("v_climb").innerHTML = fmtFt(lerp(p.elev_gain_m, s.elev_gain_m, k));
-        $("v_grade").innerHTML = fmtPct(lerp(p.max_grade, s.max_grade, k));
+        $("v_grade").innerHTML = fmtPct(lerp(p.steepest, s.steepest, k));
       });
       if (this.family.loop) { this.drawLoopDelta(u); return; }
       const sh = this.family.shortest.stats;
@@ -1879,12 +1965,12 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     },
 
     /* ------------------------------------------------------------ profile */
-    animateProfile(a, b) {
+    animateProfile(a, b, ms = 300) {
       $("prof").hidden = false;
       if (this._profAnim) cancelAnimationFrame(this._profAnim);
       const t0 = performance.now();
       const frame = (now) => {
-        const k = clamp((now - t0) / 300, 0, 1);
+        const k = clamp((now - t0) / ms, 0, 1);
         this.drawProfile(a, b, ease(k));
         if (k < 1) this._profAnim = requestAnimationFrame(frame);
       };
@@ -1904,8 +1990,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const dist = lerp(a.stats.distance_m, b.stats.distance_m, k);
       // a fixed vertical scale across the family keeps the hills comparable
       let zmin = Infinity, zmax = -Infinity;
-      // (between a loop search starting and finishing there is no family yet)
-      for (const u of (this.family ? this.family.unique : [a, b])) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+      // (while loops are being tried there is no family yet: the scan keeps
+      // a running range so the hills stay comparable from loop to loop)
+      if (this._scan && Number.isFinite(this._scan.zmin)) { zmin = this._scan.zmin; zmax = this._scan.zmax; }
+      else for (const u of (this.family ? this.family.unique : [a, b])) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
       const padL = 6, padR = 6, top = 8, bottom = 18;

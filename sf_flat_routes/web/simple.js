@@ -356,6 +356,7 @@
       map.on("zoomend", () => { if (this._labelled) this.labelRoute(this._labelled); });
 
       this.familyLayer = L.layerGroup().addTo(map);
+      this.scanLayer = L.layerGroup().addTo(map);
       this.routeLayer = L.layerGroup().addTo(map);
       this.markers = L.layerGroup().addTo(map);
       this.labelLayer = L.layerGroup().addTo(map);
@@ -575,12 +576,19 @@
         return;
       }
       const g = this.graph;
-      $("status").textContent = "Finding the flattest " + fmtLoop(loopMi) + "…";
+      $("status").textContent = "Trying loops…";
       $("slpos").textContent = fmtLoop(loopMi);
       const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm() });
+      this.scanStart(from, loopMi * MI);
       const run = () => {
         if (gen !== this._gen) return;
-        if (!search.step(30)) { setTimeout(run, 0); return; }
+        if (!search.step(30)) {
+          if (search.last && search.last !== this._scan.last) this.scanShow(search.last);
+          $("status").textContent = "Trying loops… " + search.tried;
+          setTimeout(run, 0);
+          return;
+        }
+        this.scanEnd();
         if (!search.loops.length) {
           this.clearRoute();
           $("status").textContent = "No loop from here. Try another start.";
@@ -596,7 +604,7 @@
         this.shown = null;
         $("status").textContent = search.shortfall
           ? "No " + fmtLoop(loopMi) + " fits here; this is the closest."
-          : "The flattest of " + search.accepted.length + " loops tried.";
+          : "The flattest of " + search.tried + " loops tried.";
         this.drawFamily();
         this.show(true);
         // a loop that spills out of view, or has shrunk to a small part of
@@ -608,8 +616,55 @@
       setTimeout(run, 0);
     },
 
+    /* The scan: while the loop search runs, each loop it tries flashes on
+     * the map (the last few fade out behind it), the profile morphs from
+     * one to the next and the stats follow, so the search reads as a sweep
+     * around the start rather than a wait. */
+    scanStart(from, targetM) {
+      this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
+      this.scanLayer.clearLayers();
+      this._line = null; this._labelled = null; this.shown = null;
+      $("turns").hidden = true;
+      $("delta").textContent = "Trying loops of about " + fmtLoop(targetM / MI).replace(" loop", "") + " in every direction…";
+      this._scan = { last: null, lines: [], prev: null, zmin: Infinity, zmax: -Infinity };
+      // frame the area the loops will cover before they start appearing
+      const r = targetM / 5, dLat = r / 110540, dLon = r / (111320 * Math.cos(from.lat * Math.PI / 180));
+      const area = L.latLngBounds([from.lat - dLat, from.lon - dLon], [from.lat + dLat, from.lon + dLon]);
+      const fake = { unique: [{ latlngs: [area.getSouthWest(), area.getNorthEast()] }] };
+      const keep = this.family; this.family = fake;
+      if (!this.inView() || this.viewShare() < 0.35) this.fit();
+      this.family = keep;
+    },
+    scanShow(r) {
+      const g = this.graph, sc = this._scan;
+      sc.last = r;
+      const s = g.summarise(r.arcs);
+      const m = { latlngs: g.geometry(r.arcs, this.geom), profile: resample(s.profile, 160), stats: s };
+      for (const z of m.profile.z) { if (z < sc.zmin) sc.zmin = z; if (z > sc.zmax) sc.zmax = z; }
+      const line = L.polyline(m.latlngs, { color: css("--route"), weight: 3, opacity: 0.85, interactive: false,
+        lineJoin: "round", lineCap: "round" }).addTo(this.scanLayer);
+      sc.lines.unshift(line);
+      const fades = [0.85, 0.4, 0.22, 0.12, 0.06];
+      sc.lines.forEach((l, i) => { if (i < fades.length) l.setStyle({ opacity: fades[i], weight: i ? 2 : 3 }); });
+      while (sc.lines.length > fades.length) this.scanLayer.removeLayer(sc.lines.pop());
+      $("result").hidden = false;
+      $("v_dist").innerHTML = fmtMi(s.distance_m);
+      $("v_climb").innerHTML = fmtFt(s.elev_gain_m);
+      $("v_grade").innerHTML = fmtPct(s.steepest);
+      $("prof").dataset.colour = css("--route");
+      const from = sc.prev || m;
+      sc.prev = m;
+      this.animateProfile(from, m, 140);
+    },
+    scanEnd() {
+      if (!this._scan) return;
+      this.scanLayer.clearLayers();
+      this._scan = null;
+    },
+
     recompute(fit) {
       if (this.state.loop) return this.recomputeLoop(fit);
+      this.scanEnd();
       const { from, to, mode } = this.state;
       this.family = null;
       const gen = ++this._gen;
@@ -853,7 +908,7 @@
       tween(260, (k) => {
         $("v_dist").innerHTML = fmtMi(lerp(p.distance_m, s.distance_m, k));
         $("v_climb").innerHTML = fmtFt(lerp(p.elev_gain_m, s.elev_gain_m, k));
-        $("v_grade").innerHTML = fmtPct(lerp(p.max_grade, s.max_grade, k));
+        $("v_grade").innerHTML = fmtPct(lerp(p.steepest, s.steepest, k));
       });
       if (this.family.loop) { this.drawLoopDelta(u); return; }
       const sh = this.family.shortest.stats;
@@ -900,12 +955,12 @@
     },
 
     /* ------------------------------------------------------------ profile */
-    animateProfile(a, b) {
+    animateProfile(a, b, ms = 300) {
       $("prof").hidden = false;
       if (this._profAnim) cancelAnimationFrame(this._profAnim);
       const t0 = performance.now();
       const frame = (now) => {
-        const k = clamp((now - t0) / 300, 0, 1);
+        const k = clamp((now - t0) / ms, 0, 1);
         this.drawProfile(a, b, ease(k));
         if (k < 1) this._profAnim = requestAnimationFrame(frame);
       };
@@ -925,8 +980,10 @@
       const dist = lerp(a.stats.distance_m, b.stats.distance_m, k);
       // a fixed vertical scale across the family keeps the hills comparable
       let zmin = Infinity, zmax = -Infinity;
-      // (between a loop search starting and finishing there is no family yet)
-      for (const u of (this.family ? this.family.unique : [a, b])) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
+      // (while loops are being tried there is no family yet: the scan keeps
+      // a running range so the hills stay comparable from loop to loop)
+      if (this._scan && Number.isFinite(this._scan.zmin)) { zmin = this._scan.zmin; zmax = this._scan.zmax; }
+      else for (const u of (this.family ? this.family.unique : [a, b])) for (const v of u.profile.z) { if (v < zmin) zmin = v; if (v > zmax) zmax = v; }
       const span = Math.max(zmax - zmin, 15);
       zmin -= span * 0.08; zmax = zmin + span * 1.2;
       const padL = 6, padR = 6, top = 8, bottom = 18;
