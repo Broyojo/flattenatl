@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import FEATURED_PAIRS, OUTPUT_DIR, PROCESSED_DIR
+from .config import CITY_NAME, FEATURED_PAIRS, OUTPUT_DIR, PROCESSED_DIR
 from .utils import get_logger
 
 log = get_logger("sf_flat_routes.report")
@@ -67,7 +67,9 @@ def _headline(d) -> list[str]:
         f"The street network modelled here is {total_km:,.0f} km long, of "
         f"which {km:,.0f} km is walkable. It climbs an average of "
         f"{walkable['cum_gain_fwd'].sum()/km:.1f} m for every kilometre of "
-        f"street. But that average conceals a usable low-elevation network. "
+        f"street, which is rolling rather than steep: only "
+        f"{100 * walkable.loc[walkable['max_abs_grade'] >= 0.10, 'length_m'].sum() / walkable['length_m'].sum():.0f}% "
+        f"of it has a pitch of 10% or more anywhere along the block. "
         f"Across all {len(short):,} ordered neighborhood pairs, on foot:",
         "",
         "| Objective | Mean distance | Mean climb | Mean steepest grade | "
@@ -91,9 +93,18 @@ def _headline(d) -> list[str]:
         f"**About {extra:.0f}% more walking buys about {saved:.0f}% less "
         f"climbing.** That is the central result: the minimum-climbing route "
         f"is on average only {extra:.0f}% longer than the shortest one, yet "
-        f"it avoids {saved:.0f}% of the ascent, and it drops the typical "
+        f"it avoids {saved:.0f}% of the ascent, and it takes the typical "
         f"steepest pitch from {short['max_grade'].mean():.0%} to "
         f"{flat['max_grade'].mean():.0%}.",
+        "",
+        "That is a smaller prize than in San Francisco, where the same "
+        "analysis found 14% more walking buying 39% less climbing. The likely "
+        "reason is the shape of the ground: San Francisco's hills are walls "
+        "with flats between them, so a detour goes round. Atlanta is a "
+        "plateau cut by creeks: almost every trip crosses a valley or two, "
+        "every crossing costs the same descent and climb wherever it is "
+        "made, and what a flat route can do is stay on the ridge longer and "
+        "choose the shallowest place to cross.",
         "",
         "The grade-averse objective is worth separating out. It ends up "
         f"climbing slightly *more* in total than the flattest route "
@@ -107,24 +118,11 @@ def _headline(d) -> list[str]:
         "you up one short wall, and avoiding walls will make you climb a "
         "little more overall.",
         "",
-        "A note on the baseline. The shortest pedestrian route minimises "
-        "distance only, as specified, and San Francisco's distance-minimising "
-        "pedestrian network runs straight up public stairways: the mean "
-        f"steepest pitch on a shortest walking route is "
-        f"{short['max_grade'].mean():.0%}, and some hit the model's 60% "
-        "plausibility ceiling. That is not an artefact -- it is what "
-        "minimising distance means in this city, and it is a large part of "
-        "why the flat alternatives matter.",
-        "",
-        "The same effect explains the occasional very steep pitch surviving "
-        "on a *flat* route in the tables below. A five-metre public stairway "
-        "costs only a few hundred equivalent metres under the cost model, so "
-        "when the alternative is a longer detour than that, the model takes "
-        "the stairs -- which is what a pedestrian does too. The grade-averse "
-        "objective is the one that refuses them, holding the mean steepest "
-        f"pitch to {ga['max_grade'].mean():.1%}. This was left alone rather "
-        "than tuned away: it is the cost model behaving as specified, not a "
-        "defect.",
+        "A note on the steepest-pitch column. It is the least reliable "
+        "figure here: it is set by the single worst few metres of a route, "
+        "and a lidar artefact or a short ramp is enough to move it (see the "
+        "validation report). The climbing totals are sums over the whole "
+        "route and are not sensitive to that.",
         "",
     ]
     return L
@@ -133,8 +131,8 @@ def _headline(d) -> list[str]:
 def _featured(d) -> list[str]:
     p = d["pairs"]
     L = ["## Specific answers", "",
-         "### What is the flattest reasonable route from the Mission to the "
-         "Sunset, or the Richmond to Downtown?", "",
+         "### What is the flattest reasonable route from Midtown to Grant "
+         "Park, or Downtown to Buckhead?", "",
          "| From | To | Shortest | Flattest | Balanced |", "|---|---|---|---|---|"]
 
     def cell(g):
@@ -180,10 +178,11 @@ def _featured(d) -> list[str]:
 
 def _corridors(d) -> list[str]:
     c = d["corridors"]
+    e = d["edges"]
     walk = c[c["mode"] == "walk"].head(12)
-    L = ["## San Francisco's low-elevation corridors", "",
+    L = [f"## {CITY_NAME}'s flat corridors", "",
          "These were *discovered*, not listed: the analysis aggregated how "
-         "often each street segment carried a good low-elevation route "
+         "often each street segment carried a good flat route "
          "between neighborhoods, weighted by the climbing those routes "
          "avoided, and merged the high-scoring segments into contiguous "
          "corridors. No corridor was named in advance.", "",
@@ -195,86 +194,61 @@ def _corridors(d) -> list[str]:
             f"{r['mean_abs_grade']:.1%} | {r['gain_per_km']:.1f} m | "
             f"{int(r['pair_count_max'])} | {int(r['neighborhood_span'])} | "
             f"{r['elev_min_m']:.0f}-{r['elev_max_m']:.0f} m |")
+    wk = e[e["walk_ok"]] if "walk_ok" in e.columns else e
+    net_km = wk["length_m"].sum() / 1000
     L += ["",
-          "For scale: a street that climbs under about 8 m per kilometre is "
-          "flat in a way you notice in San Francisco, and the steep streets "
-          "in the validation report run at 20-40 m per kilometre.", ""]
+          f"For scale: the walkable network as a whole climbs "
+          f"{wk['cum_gain_fwd'].sum() / net_km:.0f} m per kilometre of street.", ""]
 
     if len(walk):
+        # where the corridors sit in the city's relief
+        mid = (wk["elev_min"] + wk["elev_max"]) / 2
+        median_z = float(np.average(mid.to_numpy(), weights=None) if len(mid) else np.nan)
+        median_z = float(mid.median())
+        cmid = (walk["elev_min_m"] + walk["elev_max_m"]) / 2
+        high = walk[cmid > median_z]
         top = walk.iloc[0]
-        second = walk.iloc[1] if len(walk) > 1 else None
-        L += ["### The two spines", "",
+        L += ["### Flat means high", "",
               f"**{top['corridor_name']}** ({top['length_km']:.1f} km, "
-              f"{top['mean_abs_grade']:.1%} mean gradient) is the city's "
-              f"single most important flat corridor, serving "
-              f"{int(top['pair_count_max'])} neighborhood pairs and avoiding "
-              f"{top['climb_saved_m']/1000:.1f} km of cumulative climbing in "
-              f"aggregate. It is the Mission valley floor: Valencia and "
-              f"Guerrero running south from Market, with 16th Street as the "
-              f"cross-link. It exists because the Mission is a genuine "
-              f"alluvial flat wedged between Potrero Hill and the Twin Peaks "
-              f"massif, and it is the only continuous low ground running "
-              f"north-south through the middle of the city.", ""]
-        if second is not None:
-            L += [f"**{second['corridor_name']}** "
-                  f"({second['length_km']:.1f} km, "
-                  f"{second['mean_abs_grade']:.1%} mean gradient, "
-                  f"{int(second['pair_count_max'])} pairs) is the east-west "
-                  f"counterpart, and it is the one worth dwelling on: this is "
-                  f"**the Wiggle, the Panhandle and Golden Gate Park read as "
-                  f"a single structure**. The model had no idea the Wiggle "
-                  f"existed. It found that the Duboce/Steiner/Scott dog-leg, "
-                  f"the Fell and Oak corridor beside the Panhandle, and the "
-                  f"car-free JFK Promenade through the park are all the same "
-                  f"piece of infrastructure: the only low-gradient way from "
-                  f"the eastern flats to the ocean.", ""]
+              f"{top['mean_abs_grade']:.1%} mean gradient) is the most "
+              f"important flat corridor in the city, serving "
+              f"{int(top['pair_count_max'])} ordered neighborhood pairs and "
+              f"avoiding {top['climb_saved_m']/1000:.1f} km of cumulative "
+              f"climbing in aggregate.", "",
+              f"The pattern in the table is in its last column. The median "
+              f"street in {CITY_NAME} sits at {median_z:.0f} m; "
+              f"{len(high)} of these {len(walk)} corridors "
+              f"({high['length_km'].sum():.0f} of "
+              f"{walk['length_km'].sum():.0f} km) lie above it. In San "
+              f"Francisco the flat streets are the valley floors. Here most "
+              f"of them are ridge tops: {CITY_NAME} grew up around railways, the "
+              f"railways were laid along the divides because that is where "
+              f"the grade is easy, and the streets beside them (Edgewood and "
+              f"DeKalb, Marietta, Lee and Murphy, Whitehall and Peters) and "
+              f"Peachtree on its own ridge inherited the same profile. The "
+              f"low ground is the creeks, and nobody goes far along a creek "
+              f"without having to climb out of it.", ""]
     return L
 
 
-def _wiggle(d) -> list[str]:
-    """The Wiggle-equivalents question, answered from the corridor set."""
+def _unsung(d) -> list[str]:
+    """Corridors without a famous name, straight from the corridor set."""
     c = d["corridors"]
     walk = c[c["mode"] == "walk"]
-    famous = ("Valencia", "Market", "Embarcadero", "Kennedy", "Fell", "Oak ")
+    famous = ("Peachtree", "Beltline", "BeltLine", "DeKalb", "Marietta", "Edgewood",
+              "Ponce de Leon")
     unsung = walk[~walk["corridor_name"].str.contains("|".join(famous))].head(8)
-    L = ["### San Francisco's unnamed Wiggles", "",
-         "The Wiggle is famous because cyclists named it. These corridors do "
-         "the same job and have no name:", "",
-         "| Corridor | Length | Mean grade | Climb per km | Connects | "
-         "Why it matters |", "|---|---|---|---|---|---|"]
-    why = {
-        "7th Avenue": "the lowest crossing from the Haight and Inner Sunset "
-                      "into the western half of the city, threading between "
-                      "Mount Sutro and Twin Peaks",
-        "Kearny Street": "an almost dead-level thread through downtown, "
-                         "skirting the foot of Nob Hill and Telegraph Hill "
-                         "instead of climbing either",
-        "McAllister Street": "a level east-west route across the Western "
-                             "Addition, avoiding the Alamo Square rise",
-        "Bayshore Boulevard": "the flattest link from the southern "
-                              "neighborhoods into the city, following the old "
-                              "bay shoreline",
-        "Harrison Street": "the Mission-to-Potrero-flats connector that stays "
-                           "off the Potrero Hill grade",
-        "Irving Street": "the Sunset's own east-west spine on the old dune "
-                         "flats",
-        "Lincoln Way": "the southern edge of Golden Gate Park, the gentlest "
-                       "gradient between the park and the ocean",
-        "Church Street": "the short, heavily used approach that links Market "
-                         "Street to the Mission flats without touching the "
-                         "Castro grade",
-        "Polk Street": "the low saddle route between the northern waterfront "
-                       "and the Civic Center, west of Nob Hill",
-        "Mission Street": "the continuous valley floor from downtown to the "
-                          "southern border",
-    }
+    if unsung.empty:
+        return []
+    L = ["### The corridors nobody names", "",
+         "The BeltLine has a name, a logo and a master plan. These do the "
+         "same job without any of that:", "",
+         "| Corridor | Length | Mean grade | Climb per km | Pairs served | "
+         "Neighborhoods at its ends |", "|---|---|---|---|---|---|"]
     for _, r in unsung.iterrows():
-        note = next((v for k, v in why.items() if k in r["corridor_name"]),
-                    "a low-gradient link the analysis found to be repeatedly "
-                    "useful between neighborhoods")
         L.append(f"| {r['corridor_name']} | {r['length_km']:.1f} km | "
                  f"{r['mean_abs_grade']:.1%} | {r['gain_per_km']:.1f} m | "
-                 f"{int(r['neighborhood_span'])} neighborhoods | {note} |")
+                 f"{int(r['pair_count_max'])} | {int(r['neighborhood_span'])} |")
     L.append("")
     return L
 
@@ -304,24 +278,28 @@ def _passes(d) -> list[str]:
             "(unnamed path)"
         L.append(f"| {nm} | {r['neighborhood']} | {r['pass_elev_ft']:.0f} ft | "
                  f"{int(r['pairs_served'])} | {r['max_abs_grade']:.1%} |")
-    L += ["",
-          "The single most consequential pass in San Francisco is an unnamed "
-          "path inside **Golden Gate Park** at about 255 ft. It is the "
-          "binding constraint for 119 of the 630 neighborhood pairs -- more "
-          "than any street in the city -- because it is the lowest point on "
-          "the ridge that separates the eastern flats from the ocean side. "
-          "Anyone crossing San Francisco east to west pays that 255 ft "
-          "whatever route they choose. Its gradient where it crosses is only "
-          "4.6%, which is exactly why it is the pass: the crossing is high "
-          "but gentle.", "",
-          "Below that, the passes divide the city the way its geology does. "
-          "Clay Street over Nob Hill (332 ft) and Waller Street in the Haight "
-          "(295 ft, the Wiggle's own crest) are the low cols of the northeast. "
-          "Lansdale Avenue (696 ft) and Panorama Drive (635 ft) are the Twin "
-          "Peaks and Mount Davidson barrier, and there is simply no cheap way "
-          "over it: the neighborhoods behind it -- West of Twin Peaks, "
-          "Diamond Heights, Twin Peaks itself -- are the ones the flat "
-          "network cannot reach.", ""]
+    if len(pz):
+        t = pz.iloc[0]
+        nm = t["name"] if isinstance(t["name"], str) and t["name"] else "an unnamed path"
+        n_pairs = len(d["pass_matrix"]) if "pass_matrix" in d else None
+        of = f" of the {n_pairs:,}" if n_pairs else ""
+        L += ["",
+              f"The single most consequential pass in {CITY_NAME} is {nm} in "
+              f"**{t['neighborhood']}** at {t['pass_elev_ft']:.0f} ft. It is "
+              f"the binding constraint for {int(t['pairs_served'])}{of} "
+              f"neighborhood pairs, more than any other block in the city, "
+              f"and its gradient where it crosses is {t['max_abs_grade']:.1%}: "
+              f"a pass is the lowest way over, not a steep one.", "",
+              f"The passes are all high, between "
+              f"{pz.head(12)['pass_elev_ft'].min():.0f} and "
+              f"{pz.head(12)['pass_elev_ft'].max():.0f} ft, and that is the "
+              f"other face of the corridor result. The ridges that carry the "
+              f"railways through the city are the Eastern Continental Divide "
+              f"and its spurs: rain on one side runs to the Chattahoochee and "
+              f"the Gulf, on the other to the South River and the Atlantic. "
+              f"A trip between neighborhoods on opposite sides has to get "
+              f"over that line somewhere, and these are the lowest places it "
+              f"can.", ""]
 
     b = d["barriers"]
     if "unavoidability" in b.columns:
@@ -362,10 +340,14 @@ def _pareto(d) -> list[str]:
         if s["elev_gain_m"] <= 0:
             continue
         half = g[g["elev_gain_m"] <= 0.5 * s["elev_gain_m"]]
+        quarter = g[g["elev_gain_m"] <= 0.75 * s["elev_gain_m"]]
         rows.append({
             "halvable": len(half) > 0,
             "detour_to_halve": (half["distance_m"].min() / s["distance_m"] - 1)
             if len(half) else np.nan,
+            "quarterable": len(quarter) > 0,
+            "detour_to_quarter": (quarter["distance_m"].min() / s["distance_m"] - 1)
+            if len(quarter) else np.nan,
             "best_saved_pct": 100 * (1 - g["elev_gain_m"].min() / s["elev_gain_m"]),
             "best_detour": g.loc[g["elev_gain_m"].idxmin(), "distance_m"]
             / s["distance_m"] - 1,
@@ -373,18 +355,29 @@ def _pareto(d) -> list[str]:
     r = pd.DataFrame(rows)
 
     L = ["## The distance / climbing trade-off", "",
-         "For every one of the 1,260 ordered pairs, a single weight is swept "
+         f"For every one of the {pa.groupby(['origin', 'destination']).ngroups:,} "
+         "ordered pairs, a single weight is swept "
          "from zero (pure distance) up to the minimum-climbing objective, "
          "tracing the frontier between distance, cumulative climbing and "
          "peak gradient. The useful question is where the knee is: how much "
          "detour buys how much of the climbing.", ""]
     if len(r):
-        L += [f"- **{100*r['halvable'].mean():.0f}% of pairs can halve their "
-              f"climbing** by some route, and the median detour that costs is "
-              f"**{100*r['detour_to_halve'].median():.0f}%**. "
-              f"{100*(r['detour_to_halve'] <= 0.10).mean():.0f}% of all pairs "
-              f"can halve it within a 10% detour, "
-              f"{100*(r['detour_to_halve'] <= 0.20).mean():.0f}% within 20%.",
+        n_half = int(r["halvable"].sum())
+        if n_half >= 0.05 * len(r):
+            L += [f"- **{100*r['halvable'].mean():.0f}% of pairs can halve their "
+                  f"climbing** by some route, and the median detour that costs is "
+                  f"**{100*r['detour_to_halve'].median():.0f}%**. "
+                  f"{100*(r['detour_to_halve'] <= 0.10).mean():.0f}% of all pairs "
+                  f"can halve it within a 10% detour, "
+                  f"{100*(r['detour_to_halve'] <= 0.20).mean():.0f}% within 20%."]
+        else:
+            L += [f"- **Almost no pair can halve its climbing** by any route: "
+                  f"{n_half} of {len(r):,} can."]
+        L += [f"- **{100*r['quarterable'].mean():.0f}% of pairs can shed a "
+              f"quarter of their climbing**, at a median detour of "
+              f"**{100*r['detour_to_quarter'].median():.0f}%**; "
+              f"{100*(r['detour_to_quarter'] <= 0.10).mean():.0f}% of all "
+              f"pairs can do it within a 10% detour.",
               f"- Taken to the flattest possible route, the median pair "
               f"sheds **{r['best_saved_pct'].median():.0f}%** of its climbing "
               f"for a median **{100*r['best_detour'].median():.0f}%** more "
@@ -401,10 +394,11 @@ def _pareto(d) -> list[str]:
                      f"{_ft(row['elev_gain_m']):.0f} ft | "
                      f"{row['max_grade']:.0%} |")
         L.append("")
-    L += ["The frontiers are strongly concave: the first fraction of extra "
-          "distance removes most of the climbing, and everything after that "
-          "buys very little. That is the practical argument for the balanced "
-          "objective over the purely flattest one.", ""]
+    L += ["The frontiers are concave: the first fraction of extra "
+          "distance removes most of the climbing that can be removed, and "
+          "everything after that buys very little. That is the practical "
+          "argument for the balanced objective over the purely flattest "
+          "one.", ""]
     return L
 
 
@@ -415,23 +409,18 @@ def _modes(d) -> list[str]:
     b = p[(p["mode"] == "bike") & (p["profile"] == "min_climb")]
     steps_km = e[e["cls"] == "steps"]["length_m"].sum() / 1000
     L = ["## Walking is not cycling", "",
-         f"The two networks are modelled separately, and they are not "
-         f"interchangeable. San Francisco has {steps_km:.0f} km of public "
-         f"stairways, and they are a genuine part of the pedestrian network "
-         f"and completely useless on a bicycle; the bicycle graph excludes "
-         f"them outright. Bicycle costs also carry stress weights (a "
-         f"protected cycleway counts as 0.85 of its length, 19th Avenue and "
-         f"Van Ness as 1.9) and respect one-way restrictions, which "
-         f"pedestrians do not.", "",
-         f"The result is that the flattest bicycle route averages "
+         f"The two networks are modelled separately. {CITY_NAME} has only "
+         f"{steps_km:.0f} km of public stairways, which are part of the "
+         f"pedestrian network and excluded outright for bicycles, so the "
+         f"difference here is mostly one-way streets, which bind a bicycle "
+         f"and not a pedestrian, and stress weights: a protected cycleway "
+         f"counts as 0.85 of its length, and a trunk road such as Ponce de "
+         f"Leon Avenue, Moreland Avenue or Northside Drive as 1.9.", "",
+         f"The flattest bicycle route averages "
          f"{_mi(b['distance_m'].mean()):.2f} mi and "
          f"{_ft(b['elev_gain_m'].mean()):.0f} ft of climbing against "
          f"{_mi(w['distance_m'].mean()):.2f} mi and "
-         f"{_ft(w['elev_gain_m'].mean()):.0f} ft on foot. The difference is "
-         f"modest in aggregate but decisive in specific places: any route "
-         f"whose flat pedestrian option runs up a stairway has no bicycle "
-         f"equivalent at all, which is why the Presidio has no "
-         f"bicycle-legal connection from some of its paths.", ""]
+         f"{_ft(w['elev_gain_m'].mean()):.0f} ft on foot.", ""]
     return L
 
 
@@ -481,17 +470,20 @@ def _robustness(d) -> list[str]:
          f"same location in {int((sd['top_pass_nbhd'] == base['top_pass_nbhd']).sum())} "
          f"of {len(sd)} runs; {others['top_pass_ft'].min():.0f}-"
          f"{others['top_pass_ft'].max():.0f} ft |",
-         f"| Wiggle: excess climb, flat vs shortest | "
-         f"{base['wiggle_excess_flat_m']:.1f} vs {base['wiggle_excess_shortest_m']:.1f} m | "
-         f"flat {others['wiggle_excess_flat_m'].min():.1f}-"
-         f"{others['wiggle_excess_flat_m'].max():.1f} m, shortest "
-         f"{others['wiggle_excess_shortest_m'].min():.1f}-"
-         f"{others['wiggle_excess_shortest_m'].max():.1f} m |",
-         f"| Filbert Street gradient (published 31.5%) | "
-         f"{base['grade_Filbert Street']:.1f}% | "
-         f"{others['grade_Filbert Street'].min():.1f}% to "
-         f"{others['grade_Filbert Street'].max():.1f}% |",
+         f"| BeltLine trip: excess climb, flat vs shortest | "
+         f"{base['signature_excess_flat_m']:.1f} vs {base['signature_excess_shortest_m']:.1f} m | "
+         f"flat {others['signature_excess_flat_m'].min():.1f}-"
+         f"{others['signature_excess_flat_m'].max():.1f} m, shortest "
+         f"{others['signature_excess_shortest_m'].min():.1f}-"
+         f"{others['signature_excess_shortest_m'].max():.1f} m |",
          ""]
+    steep_cols = [c for c in sd.columns if c.startswith("grade_")
+                  and not c.startswith("grade_averse")]
+    if steep_cols:
+        c0 = steep_cols[0]
+        L.insert(-1, f"| {c0[len('grade_'):]}: steepest pitch | "
+                     f"{base[c0]:.1f}% | {others[c0].min():.1f}% to "
+                     f"{others[c0].max():.1f}% |")
     dev = (others["min_climb_gain_saved_pct"] - base["min_climb_gain_saved_pct"]).abs()
     worst = dev.idxmax()
     least = others["edge_overlap_pct"].idxmin()
@@ -501,15 +493,18 @@ def _robustness(d) -> list[str]:
           f"is **{worst}** ({others.loc[worst, 'change']}), at "
           f"{others.loc[worst, 'min_climb_gain_saved_pct']:.0f}% climbing "
           f"avoided against {base['min_climb_gain_saved_pct']:.0f}% at "
-          f"baseline. The dominant pass and the Wiggle result hold in every "
-          f"run.", "",
+          f"baseline. The dominant pass is in the same neighborhood in "
+          f"{int((sd['top_pass_nbhd'] == base['top_pass_nbhd']).sum())} of "
+          f"{len(sd)} runs, and the flat BeltLine route wastes less climbing "
+          f"than the shortest in "
+          f"{int((sd['signature_excess_flat_m'] < sd['signature_excess_shortest_m']).sum())}.", "",
           f"The corridors are where the model is least rigid, and it is "
           f"worth being precise about how. The *street* that qualifies as "
           f"corridor material is {others['edge_overlap_pct'].min():.0f}-"
           f"{others['edge_overlap_pct'].max():.0f}% the same by length, and "
           f"{_top_corridor_phrase(sd)}; what changes "
           f"is where each corridor is cut and therefore what it is called, "
-          f"most under the profile smoothing window (**{least}**, "
+          f"most under **{least}** ({others.loc[least, 'change']}, "
           f"{others['edge_overlap_pct'].min():.0f}%). A handful of "
           f"borderline streets drift in and out of the top twelve "
           f"({', '.join(drifters)}): these are real corridors whose rank "
@@ -521,39 +516,46 @@ def _robustness(d) -> list[str]:
 def _limits(d) -> list[str]:
     return [
         "## What this analysis does not tell you", "",
-        "- **Elevation is the ground, not the street surface.** The 1 m lidar "
-        "DEM is bare-earth, so bridges and tunnels are corrected by "
-        "interpolating across the structure, and a handful of piers over "
-        "water had to be solved from their neighbours.",
+        "- **Elevation is the ground, not the street surface, and the ground "
+        "of 2018.** The 1 m lidar DEM is bare-earth, so bridges and tunnels "
+        "are corrected by interpolating across the structure, and streets "
+        "passing under a deck are bridged across it. Anything built or "
+        "regraded since the survey is measured as it was.",
         "- **Travel is modelled on street centrelines.** Sidewalk and "
         "crosswalk geometry exists in the source data but is deliberately "
         "excluded: including it would represent every street two or three "
         "times and wreck the corridor aggregation. Pedestrian distances are "
-        "therefore block-scale, not door-to-door.",
-        "- **One access point per neighborhood.** Each neighborhood is "
-        "represented by a single street-network-weighted, "
-        "intersection-snapped point. Large or awkwardly shaped "
-        "neighborhoods -- Bayview, Lakeshore, the Presidio -- are served "
-        "worse by this than compact ones.",
+        "therefore block-scale, not door-to-door, and nothing here knows "
+        "whether a street has a sidewalk at all, which in parts of Atlanta "
+        "it does not.",
+        "- **36 of 248 neighborhoods, one access point each.** The pair "
+        "matrix runs between 36 neighborhoods chosen to cover all 25 "
+        "Neighborhood Planning Units, each represented by a single "
+        "street-network-weighted, intersection-snapped point. The headline "
+        "averages are averages over those trips, which are long: "
+        f"{_mi(d['pairs'].loc[(d['pairs']['mode'] == 'walk') & (d['pairs']['profile'] == 'shortest'), 'distance_m'].mean()):.1f} "
+        "miles on average by the shortest route. They say what the terrain "
+        "allows across the city, not what a typical errand looks like.",
+        "- **City limits only.** Decatur, Druid Hills, East Point, Sandy "
+        "Springs and the rest of the metropolitan area are outside the "
+        "network, so a route cannot leave the city even where the flat way "
+        "round would.",
         "- **No traffic, surface quality, signals or safety.** The bicycle "
         "stress weights are a crude proxy for road class, not a level-of-"
         "traffic-stress model, and nothing here accounts for signal delay, "
         "pavement condition or collision risk.",
-        "- **Bicycle facilities are OSM-derived, not SFMTA.** DataSF was "
-        "unreachable from the build environment, so the bicycle and "
-        "low-stress layers are inferred from OpenStreetMap tagging rather "
-        "than from SFMTA's official facility classes or the Slow Streets "
-        "designation list.",
-        "- **The 37-neighborhood boundary set, not the 41-unit Analysis "
-        "Neighborhoods.** Same cause. The difference mostly affects how the "
-        "Sunset, the Richmond and the Twin Peaks area are subdivided.",
+        "- **Bicycle facilities in the analysis are OSM-derived.** The "
+        "explorer's bicycle and low-stress layers are inferred from "
+        "OpenStreetMap tagging. The route finder's *prefer calm streets* "
+        "uses the Atlanta Regional Commission's facility inventory instead, "
+        "which is regional and coarser than a city bikeway layer.",
         "",
     ]
 
 
 def write_report() -> Path:
     d = _load()
-    L = ["# San Francisco's flat street network: findings", "",
+    L = [f"# {CITY_NAME}'s flat street network: findings", "",
          "*Generated by `python -m sf_flat_routes report`. Every figure is "
          "computed from the analysis outputs in this repository; see "
          "`validation_report.md` for the checks against known ground truth.*",
@@ -561,7 +563,7 @@ def write_report() -> Path:
     L += _headline(d)
     L += _featured(d)
     L += _corridors(d)
-    L += _wiggle(d)
+    L += _unsung(d)
     L += _passes(d)
     L += _pareto(d)
     L += _modes(d)

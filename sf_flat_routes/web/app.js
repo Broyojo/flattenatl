@@ -1,4 +1,4 @@
-/* San Francisco flat routes -- the explorer page (everything on screen).
+/* Atlanta flat routes -- the explorer page (everything on screen).
  * Depends on engine.js. */
 "use strict";
 
@@ -162,7 +162,7 @@ const App = {
   /* ---------------------------------------------------------------- map */
   buildMap() {
     const map = L.map("map", {
-      preferCanvas: true, center: [37.762, -122.437], zoom: 12,
+      preferCanvas: true, center: [33.765, -84.42], zoom: 11,
       minZoom: 10, maxZoom: 18, zoomControl: true,
     });
     this._fitCity = () => {
@@ -180,6 +180,10 @@ const App = {
         + ' contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>'
         + ' &middot; elevation USGS 3DEP &middot; streets Overture Maps',
     }).addTo(map);
+    // without tiles the data still needs its credit line
+    else map.attributionControl.addAttribution(
+      'streets &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      + ' contributors via Overture Maps &middot; elevation USGS 3DEP');
 
     this.overlays = {};
     this.network = new NetworkLayer(this.geom).addTo(map);
@@ -188,7 +192,7 @@ const App = {
     const defs = [
       ["neighborhoods", "Neighborhood boundaries", true,
         () => ({ color: "#8492a0", weight: 1.1, opacity: 0.8, fill: false, dashArray: "4,3" })],
-      ["basins", "Lowland basins (street below 15 m)", false,
+      ["basins", `Lowland basins (street below ${this.DATA.basin_elev_m || 15} m)`, false,
         () => ({ color: "#3f9b6d", weight: 1.2, opacity: 0.55 })],
       ["bike_network", "Bicycle facilities (OSM-derived)", false,
         () => ({ color: "#39d98a", weight: 2.0, opacity: 0.9 })],
@@ -279,7 +283,7 @@ const App = {
       low_stress: [["name", "Street"], ["cls", "Class"],
         ["bike_facility", "Facility"], ["length_m", "Length", "m0"]],
       neighborhoods: [["neighborhood", "Neighborhood"], ["area_km2", "Area", "km2"]],
-      basins: [["basin_label", "Lowland basin"], ["length_km", "Street below 15 m", "km"]],
+      basins: [["basin_label", "Lowland basin"], ["length_km", `Street below ${this.DATA.basin_elev_m || 15} m`, "km"]],
     }[kind] || [];
     let h = "";
     for (const [k, lab, how] of spec) {
@@ -336,8 +340,9 @@ const App = {
       return this.nodeGrid.nearest(p[0], p[1],
         i => (this.graph.nodeFlags[i] & bit) !== 0);
     };
-    this.state.src = pick("Mission");
-    this.state.dst = pick("Outer Sunset");
+    const [o, d] = this.DATA.default_pair || [];
+    this.state.src = pick(o);
+    this.state.dst = pick(d);
   },
 
   weights() {
@@ -505,7 +510,7 @@ Object.assign(App, {
       oSel.appendChild(new Option(n, n));
       dSel.appendChild(new Option(n, n));
     }
-    oSel.value = "Mission"; dSel.value = "Outer Sunset";
+    [oSel.value, dSel.value] = this.DATA.default_pair || ["", ""];
     const setFrom = (sel, which) => {
       const name = sel.value;
       if (!name) return;

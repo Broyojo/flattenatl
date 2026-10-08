@@ -7,14 +7,17 @@ Three independent checks:
     separately produced products, so agreement is evidence the mosaic is
     correctly georeferenced and in the expected vertical datum.
 
-2.  **Street grades** -- computed maximum grades against published figures
-    for San Francisco's famously steep streets.  This is the check that
-    catches sampling or smoothing problems.
+2.  **Street grades** -- computed maximum grades against published figures,
+    where a city has them.  San Francisco does (this check was written
+    around Filbert and Bradford streets); Atlanta has no comparable table
+    of measured street grades, so here the section lists the steepest
+    streets the model finds, as readings to be checked on the ground.
 
-3.  **Flat corridors** -- the streets that local knowledge says are flat
-    (the Wiggle, Market Street, Valencia Street, the Embarcadero, the Great
-    Highway, the Alemany/San Jose corridor, Golden Gate Park) must come out
-    flat, and must actually appear in the discovered corridor set.
+3.  **Flat corridors** -- the lines local knowledge says are flat, which in
+    Atlanta means the old railway grades: the BeltLine trails, the creek
+    greenways, and the streets laid alongside the railways on the ridges
+    (DeKalb Avenue, Marietta Street).  They must come out flat, and should
+    appear in the discovered corridor set.
 
 The model is *not* tuned to make these pass; where a target disagrees, the
 disagreement is reported with a diagnosis.
@@ -24,64 +27,74 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .config import MIN_RELIABLE_GRADE_LENGTH_M, OUTPUT_DIR
+from .config import CRS_PROJECTED, MIN_RELIABLE_GRADE_LENGTH_M, OUTPUT_DIR
 from .utils import get_logger, step
 
 log = get_logger("sf_flat_routes.validate")
 
 VALIDATION_MD = OUTPUT_DIR / "validation_report.md"
 
-#: Published maximum grades of well-known San Francisco streets. Figures are
-#: the widely cited values for the steepest block of each street.
-KNOWN_STEEP = {
-    "Filbert Street": 0.315,
-    "22nd Street": 0.315,
-    "Jones Street": 0.290,
-    "Bradford Street": 0.410,
-    "Prentiss Street": 0.370,
-    "Nevada Street": 0.350,
-    "Baden Street": 0.320,
-    "Duboce Avenue": 0.275,
-}
+#: Published maximum grades of well-known streets, {name: grade}.  Empty for
+#: Atlanta: no figure could be traced to a measurement, and a table of
+#: half-remembered numbers would only look like validation.  With nothing
+#: here, ``check_steep_streets`` reports the model's own steepest streets.
+KNOWN_STEEP: dict[str, float] = {}
+
+#: A street counts as flat when its length-weighted mean absolute gradient
+#: is under this.  Gain per kilometre is reported too but not judged: it
+#: depends on which way each block happens to be drawn, so a railway grade
+#: climbing steadily at 1% reads as 10 m/km one way and nothing the other.
+FLAT_MEAN_GRADE = 0.02
 
 #: Corridors local knowledge says are flat: the streets that carry them and,
 #: where the name alone is ambiguous, the geographic window that isolates the
-#: corridor.  The window matters: "Steiner Street" runs from the Marina to
-#: the Castro and climbs Pacific Heights on the way, so averaging over every
-#: edge of that name says nothing about the Wiggle. Windows are
-#: (lon_min, lon_max, lat_min, lat_max) in WGS84.
+#: corridor.  Windows are (lon_min, lon_max, lat_min, lat_max) in WGS84.
 KNOWN_FLAT = {
-    # The Wiggle is a *path*, not a set of streets: Duboce Avenue climbs 28%
-    # toward the Castro and Scott Street climbs to Alamo Square, so any
-    # name- or box-based average is meaningless. It is therefore validated as
-    # the model's own flat route between the corridor's canonical endpoints
-    # (Market at Duboce, to Fell at Scott by the Panhandle).
-    # Endpoints are the canonical Wiggle trip: Market Street at Duboce, to
-    # Haight Street at Masonic. Shorter endpoint pairs are not a real test,
-    # because over a few hundred metres the Wiggle *is* also the shortest
-    # path and there is nothing to compare.
-    "The Wiggle (as a route)": {
+    # The Eastside Trail is validated twice: as a set of edges, below, and as
+    # the answer to a routing question.  The trip is Glenwood Avenue at Bill
+    # Kennedy Way to Piedmont Park at 10th and Monroe: the direct way is up
+    # Boulevard, over every ridge between the two; the flat way is the old
+    # belt railway.  A correct model takes the trail when asked for a flat
+    # route and Boulevard when asked for the shortest.
+    "The BeltLine (as a route)": {
         "streets": [],
-        "route": ((-122.4283, 37.7695), (-122.4455, 37.7702)),
+        "route": ((-84.3530, 33.7405), (-84.3682, 33.7818)),
     },
-    "Market Street (Embarcadero to Castro)": {
-        "streets": ["Market Street"],
-        "bbox": (-122.4370, -122.3930, 37.7620, 37.7960),
+    "BeltLine Eastside Trail": {
+        "streets": ["Atlanta Beltline Eastside Trail", "Interim BeltLine Eastside Trail"],
     },
-    "Valencia Street": {"streets": ["Valencia Street"]},
-    "Golden Gate Park (JFK / MLK drives)": {
-        "streets": ["John F. Kennedy Promenade", "John F Kennedy Drive",
-                    "Martin Luther King Junior Drive"],
+    "BeltLine Westside Trail": {"streets": ["Atlanta Beltline Westside Trail"]},
+    "BeltLine Southside and Southeast trails": {
+        "streets": ["Atlanta Beltline Southside Trail", "Atlanta BeltLine Southside Trail",
+                    "Atlanta Beltline Southeast Trail"],
     },
-    "The Panhandle (Fell / Oak)": {
-        "streets": ["Fell Street", "Oak Street", "Oak Street Cyclepath"],
-        "bbox": (-122.4560, -122.4330, 37.7700, 37.7790),
+    "Proctor Creek Greenway": {"streets": ["Proctor Creek Greenway"]},
+    "DeKalb Avenue (beside the Georgia Railroad)": {
+        "streets": ["DeKalb Avenue Northeast", "DeKalb Avenue"],
     },
-    "Embarcadero": {"streets": ["The Embarcadero"]},
-    "Great Highway / western edge": {"streets": ["Great Highway", "Sunset Dunes"]},
-    "Alemany / San Jose corridor": {
-        "streets": ["Alemany Boulevard", "San Jose Avenue"],
+    "Marietta Street (beside the Western & Atlantic)": {
+        "streets": ["Marietta Street Northwest", "Marietta Street",
+                    "West Marietta Street Northwest"],
     },
+    "Lee Street / Murphy Avenue (beside the railway south)": {
+        "streets": ["Lee Street Southwest", "Murphy Avenue Southwest"],
+    },
+    "Peachtree Street, Downtown to Midtown (the ridge road)": {
+        "streets": ["Peachtree Street Northeast"],
+    },
+}
+
+#: The routing question behind "The BeltLine (as a route)", for the report.
+SIGNATURE = {
+    "key": "The BeltLine (as a route)",
+    "title": "The BeltLine",
+    "from": "Glenwood Avenue at Bill Kennedy Way",
+    "to": "Piedmont Park at 10th Street and Monroe Drive",
+    "direct": "Boulevard",
+    # the streets that make up the corridor, to say whether a route used it
+    "streets": {"Atlanta Beltline Eastside Trail", "Atlanta Beltline Southeast Trail",
+                "Interim BeltLine Eastside Trail", "Bill Kennedy Way",
+                "Krog Street Northeast", "Wylie Street Southeast"},
 }
 
 DRIVABLE = ("residential", "living_street", "tertiary", "secondary",
@@ -112,7 +125,7 @@ def check_dem_agreement(n_points: int = 4000, seed: int = 0) -> pd.DataFrame:
     ok = np.isfinite(z1)
     xs, ys, z1 = xs[ok][:n_points], ys[ok][:n_points], z1[ok][:n_points]
 
-    tr = Transformer.from_crs("EPSG:26910", "EPSG:4269", always_xy=True)
+    tr = Transformer.from_crs(CRS_PROJECTED, "EPSG:4269", always_xy=True)
     lon, lat = tr.transform(xs, ys)
     with rasterio.open(DEM_13_TIF) as d13:
         nod = d13.nodata
@@ -128,18 +141,43 @@ def check_dem_agreement(n_points: int = 4000, seed: int = 0) -> pd.DataFrame:
     return df
 
 
-def check_steep_streets(edges) -> pd.DataFrame:
+def check_steep_streets(edges, n_unpublished: int = 12) -> pd.DataFrame:
     """Computed vs published maximum grades for known steep streets.
 
     Only drivable classes and edges at least
     ``MIN_RELIABLE_GRADE_LENGTH_M`` long are considered, so the comparison is
     against the street rather than against an adjacent stairway or a 5 m stub.
+
+    With no published figures (``KNOWN_STEEP`` empty) the table is instead
+    the steepest named streets the model finds, ranked by the average
+    gradient of a whole block of at least 80 m.  That is the figure a lidar
+    artefact cannot fake: a spike on an otherwise level block moves the
+    steepest pitch a long way and the block average hardly at all.
     """
+    drivable = edges[edges["cls"].isin(DRIVABLE)
+                     & (edges["length_m"] >= MIN_RELIABLE_GRADE_LENGTH_M)]
     rows = []
+    if not KNOWN_STEEP:
+        named = drivable[drivable["name"].notna() & ~drivable["is_structure"]
+                         & (drivable["length_m"] >= 80.0)].copy()
+        named["block_grade"] = named["avg_grade_fwd"].abs()
+        top = (named.sort_values("block_grade", ascending=False)
+                    .drop_duplicates("name").head(n_unpublished))
+        for _, r in top.iterrows():
+            rows.append({"street": r["name"], "published": np.nan,
+                         "computed": float(r["max_abs_grade"]), "diff": np.nan,
+                         "block_grade": float(r["block_grade"]),
+                         "block_m": float(r["length_m"]),
+                         "rise_m": abs(float(r["net_change_fwd"])),
+                         "n_edges": int((named["name"] == r["name"]).sum()),
+                         "verdict": "no published figure"})
+        df = pd.DataFrame(rows)
+        # how much of the network carries an implausible pitch at all
+        df.attrs["n_drivable"] = int(len(drivable))
+        df.attrs["n_over_30"] = int((drivable["max_abs_grade"] >= 0.30).sum())
+        return df
     for name, published in KNOWN_STEEP.items():
-        sub = edges[(edges["name"] == name)
-                    & edges["cls"].isin(DRIVABLE)
-                    & (edges["length_m"] >= MIN_RELIABLE_GRADE_LENGTH_M)]
+        sub = drivable[drivable["name"] == name]
         if sub.empty:
             rows.append({"street": name, "published": published,
                          "computed": np.nan, "diff": np.nan,
@@ -154,8 +192,7 @@ def check_steep_streets(edges) -> pd.DataFrame:
                      "n_edges": len(sub),
                      "street_km": float(sub["length_m"].sum() / 1000),
                      "verdict": verdict})
-    df = pd.DataFrame(rows)
-    return df
+    return pd.DataFrame(rows)
 
 
 def _window(edges, bbox):
@@ -197,7 +234,7 @@ def check_flat_corridors(edges, corridors=None) -> pd.DataFrame:
             "corridor": label, "streets": "; ".join(streets),
             "street_km": km, "gain_per_km": gain_km,
             "mean_abs_grade": mean_grade,
-            "verdict": "flat" if gain_km < 15 else "not flat",
+            "verdict": "flat" if mean_grade < FLAT_MEAN_GRADE else "not flat",
             "discovered": discovered,
         })
     return pd.DataFrame(rows)
@@ -227,12 +264,13 @@ def _check_flat_route(label, spec, edges, corridors):
     res = {}
     for pname in ("shortest", "balanced", "min_climb"):
         arcs, s = route(graph, a, b, ROUTING_PROFILES[pname])
-        net = abs(s["end_elev_m"] - s["start_elev_m"])
+        # signed: a trip that ends lower has no climbing forced on it at all
+        net = s["end_elev_m"] - s["start_elev_m"]
         res[pname] = {
             "km": s["distance_m"] / 1000.0,
             "gain": s["elev_gain_m"],
             "net": net,
-            "excess": max(0.0, s["elev_gain_m"] - net),
+            "excess": max(0.0, s["elev_gain_m"] - max(net, 0.0)),
             "max_grade": s["max_grade"],
             "names": sorted({n for n in graph.table.iloc[arcs]["name"].dropna()}),
         }
@@ -260,6 +298,7 @@ def _check_flat_route(label, spec, edges, corridors):
         "shortest_km": short_r["km"],
         "flat_max_grade": flat_r["max_grade"],
         "verdict": ("efficient climb" if flat_r["excess"] <= 0.5 * short_r["excess"]
+                    else "less wasted climbing" if flat_r["excess"] <= 0.8 * short_r["excess"]
                     else "no better than shortest"),
         "discovered": discovered,
     }
@@ -280,48 +319,32 @@ def _nearest_graph_node(graph, edges, lon, lat):
     return sub.iloc[int(np.argmin(d))]["u"]
 
 
-def check_wiggle_route(ctx) -> dict:
-    """Does the flat objective actually route the Wiggle?
+def check_signature_route(ctx) -> dict:
+    """Does the flat objective actually route the BeltLine?
 
-    The Wiggle is the dog-leg from Market Street at Duboce up to the
-    Panhandle, avoiding the direct climb over the Lower Haight ridge.  A
-    correct model should choose it when asked for a flat route from the
-    Mission/Duboce area to the Haight, and should *not* choose it when asked
-    for the shortest route.
+    Bicycle routing between the endpoints of ``KNOWN_FLAT[SIGNATURE["key"]]``
+    under three objectives, with the corridor's streets each route used.  A
+    correct model should choose the corridor when asked for a flat route and
+    need not when asked for the shortest.
     """
     from .routing import route
     from .config import ROUTING_PROFILES
 
     edges = ctx.edges
     graph = ctx.graphs["bike"]
-
-    def nearest_node(lon, lat):
-        from pyproj import Transformer
-        tr = Transformer.from_crs("EPSG:4326", edges.crs, always_xy=True)
-        x, y = tr.transform(lon, lat)
-        nodes = graph.node_ids
-        sub = edges[edges["u"].isin(set(nodes))]
-        d = None
-        # use edge start points as a proxy for node coordinates
-        coords = np.array([g.coords[0] for g in sub.geometry])
-        d = (coords[:, 0] - x) ** 2 + (coords[:, 1] - y) ** 2
-        return sub.iloc[int(np.argmin(d))]["u"]
-
-    # Market & Duboce  ->  Haight & Masonic (the classic Wiggle trip)
-    a = nearest_node(-122.4283, 37.7695)
-    b = nearest_node(-122.4455, 37.7702)
+    (alon, alat), (blon, blat) = KNOWN_FLAT[SIGNATURE["key"]]["route"]
+    a = _nearest_graph_node(graph, edges, alon, alat)
+    b = _nearest_graph_node(graph, edges, blon, blat)
     out = {}
-    wiggle_streets = {"Duboce Avenue", "Steiner Street", "Waller Street",
-                      "Pierce Street", "Haight Street", "Scott Street",
-                      "Fell Street", "Webster Street"}
     for pname in ("shortest", "balanced", "min_climb"):
         arcs, s = route(graph, a, b, ROUTING_PROFILES[pname])
-        names = set(graph.table.iloc[arcs]["name"].dropna())
+        tab = graph.table.iloc[arcs]
+        on = tab[tab["name"].isin(SIGNATURE["streets"])]
         out[pname] = {
             "distance_m": s["distance_m"], "gain_m": s["elev_gain_m"],
             "max_grade": s["max_grade"],
-            "wiggle_streets_used": sorted(names & wiggle_streets),
-            "n_wiggle_streets": len(names & wiggle_streets),
+            "corridor_streets_used": sorted(set(on["name"])),
+            "corridor_share": float(on["length_m"].sum() / max(s["distance_m"], 1e-9)),
         }
     return out
 
@@ -334,17 +357,17 @@ def run_validation(ctx, corridors=None, write: bool = True) -> dict:
         steep = check_steep_streets(ctx.edges)
         flat = check_flat_corridors(ctx.edges, corridors)
         try:
-            wiggle = check_wiggle_route(ctx)
+            signature = check_signature_route(ctx)
         except Exception as exc:                      # pragma: no cover
-            log.warning("Wiggle route check failed: %s", exc)
-            wiggle = {}
+            log.warning("signature route check failed: %s", exc)
+            signature = {}
 
     if write:
-        _write_report(dem, steep, flat, wiggle)
-    return {"dem": dem, "steep": steep, "flat": flat, "wiggle": wiggle}
+        _write_report(dem, steep, flat, signature)
+    return {"dem": dem, "steep": steep, "flat": flat, "signature": signature}
 
 
-def _write_report(dem, steep, flat, wiggle) -> None:
+def _write_report(dem, steep, flat, signature) -> None:
     L: list[str] = ["# Validation report", ""]
     L += ["## 1. Elevation: 1 m lidar vs independent 1/3 arc-second DEM", ""]
     if len(dem):
@@ -362,44 +385,57 @@ def _write_report(dem, steep, flat, wiggle) -> None:
     else:
         L += ["_Not run: the 1/3 arc-second tile was not cached._", ""]
 
-    L += ["## 2. Grades on known steep streets", "",
-          "| Street | Published | Computed | Difference | Verdict |",
-          "|---|---|---|---|---|"]
-    for _, r in steep.iterrows():
-        c = "n/a" if not np.isfinite(r["computed"]) else f"{r['computed']:.1%}"
-        df_ = "n/a" if not np.isfinite(r["diff"]) else f"{r['diff']:+.1%}"
-        L.append(f"| {r['street']} | {r['published']:.1%} | {c} | {df_} | "
-                 f"{r['verdict']} |")
-    ok = int((steep["verdict"] == "ok").sum())
-    L += ["", f"**{ok} of {len(steep)}** streets agree within 5 percentage "
-          "points.", "",
-          "Nevada Street is the one substantial disagreement, and it is a "
-          "classification issue rather than an elevation one: the pitch that "
-          "gives Nevada Street its published 35% is tagged `steps` in "
-          "OpenStreetMap, and this table deliberately measures only drivable "
-          "classes. The stairway edge itself is computed at 34.6%, which "
-          "matches the published figure closely. The model was left "
-          "unchanged.", "",
-          "Where the computed value is lower, the cause is the smoothing "
-          "chain rather than the elevation data, and the trade-off is "
-          "deliberate. Published 'steepest street' figures are measured over "
-          "the single steepest pitch, sometimes only 15-20 m long. Bradford "
-          "Street, the steepest street in the city, illustrates the whole "
-          "chain: sampled raw at 5 m it reads 41.4% against a published 41%; "
-          "sampled raw at 10 m, 36.8% (which is why 5 m was adopted); with "
-          "the 50 m Savitzky-Golay window applied within the edge, 36.9%; and "
-          "as the pipeline actually computes it -- smoothed across whole "
-          "street segments and reconciled at intersections -- 33.1%. So the "
-          "smoothing costs roughly eight percentage points on the very "
-          "shortest extreme pitches.", "",
-          "That cost is accepted because the alternative is worse. With a "
-          "narrower window, localised lidar artefacts survived and pushed "
-          "22nd Street and Baden Street to the 60% plausibility ceiling, and "
-          "smoothing edge-by-edge instead of segment-by-segment gave the two "
-          "edges either side of an intersection different elevations for the "
-          "same corner. Since the object of this project is to find *flat* "
-          "routes, attenuating the peak of a 41% wall is a far cheaper error "
-          "than inventing gradients on flat ground.", ""]
+    if "published" in steep.columns and steep["published"].notna().any():
+        L += ["## 2. Grades on known steep streets", "",
+              "| Street | Published | Computed | Difference | Verdict |",
+              "|---|---|---|---|---|"]
+        for _, r in steep.iterrows():
+            c = "n/a" if not np.isfinite(r["computed"]) else f"{r['computed']:.1%}"
+            df_ = "n/a" if not np.isfinite(r["diff"]) else f"{r['diff']:+.1%}"
+            L.append(f"| {r['street']} | {r['published']:.1%} | {c} | {df_} | "
+                     f"{r['verdict']} |")
+        ok = int((steep["verdict"] == "ok").sum())
+        L += ["", f"**{ok} of {len(steep)}** streets agree within 5 percentage "
+              "points.", ""]
+    else:
+        L += ["## 2. The steepest streets the model finds", "",
+              "There is nothing to compare these against. San Francisco's "
+              "steep streets have published gradients, and the pipeline this "
+              "was ported from was checked against them (six of eight within "
+              "five points, with the same smoothing and sampling settings "
+              "used here). Atlanta has no such table that could be traced to "
+              "a measurement, so this section is a list of readings, not a "
+              "validation. Streets are ranked by the average gradient of "
+              "a whole block of at least 80 m, the figure a lidar artefact "
+              "cannot fake; the steepest pitch within the block is beside it.", "",
+              "| Street | Block average | Rise | Block length | Steepest pitch |",
+              "|---|---|---|---|---|"]
+        for _, r in steep.iterrows():
+            L.append(f"| {r['street']} | {r['block_grade']:.1%} | "
+                     f"{r['rise_m']:.0f} m | {r['block_m']:.0f} m | "
+                     f"{r['computed']:.1%} |")
+        n_all = steep.attrs.get("n_drivable", 0)
+        n_30 = steep.attrs.get("n_over_30", 0)
+        L += ["", "The steepest-pitch column is the less trustworthy of the "
+              f"two. {n_30:,} of {n_all:,} drivable blocks "
+              f"({100 * n_30 / max(n_all, 1):.1f}%) carry a pitch of 30% or "
+              "more somewhere along them, and most of those are steep for a "
+              "few metres on a block that is otherwise gentle: a real kink "
+              "(a ramp, a culvert), or ground that has changed since the "
+              "lidar was flown in 2018, as in the subdivisions built since. "
+              "They are left in rather than filtered, and they are why the "
+              "route finder's *steepest* figure should be read as an upper "
+              "bound.", "",
+              "Two families of artefact were removed before this table was "
+              "made, because they sat on the streets that matter most. A "
+              "street passing under a freeway or railway bridge read as a "
+              "hump, the bare-earth surface there being interpolated from "
+              "the embankments either side: Windsor Street under I-20 "
+              "carried 11 m of climbing that does not exist. And the last "
+              "metres of a street approaching a bridge fell away, because "
+              "the mapped end of a bridge usually sits out over the cut. "
+              "Both are now found from the street geometry and bridged "
+              "(`network.find_dem_gaps`, `elevation.ABUTMENT_PAD_M`).", ""]
 
     L += ["## 3. Known flat corridors", "",
           "| Corridor | Km | Gain per km | Mean abs grade | Verdict | "
@@ -409,62 +445,71 @@ def _write_report(dem, steep, flat, wiggle) -> None:
         m = "n/a" if not np.isfinite(r["mean_abs_grade"]) else f"{r['mean_abs_grade']:.1%}"
         L.append(f"| {r['corridor']} | {r['street_km']:.1f} | {g} | {m} | "
                  f"{r['verdict']} | {'yes' if r['discovered'] else 'no'} |")
-    L += ["", "For scale, the steep streets in section 2 run at 20-40 m of "
-          "climbing per kilometre of street, and the Embarcadero and the "
-          "Great Highway -- the two genuinely level corridors in the city -- "
-          "come out under 1 m/km.", ""]
-    wig = flat[flat["corridor"].str.contains("Wiggle")]
-    if len(wig) and np.isfinite(wig.iloc[0].get("excess_gain_m", np.nan)):
-        w = wig.iloc[0]
-        L += ["### The Wiggle", "",
-              "The Wiggle is measured as a *route* rather than as a set of "
-              "street names, because Duboce Avenue and Scott Street both "
-              "climb hard outside the corridor itself, so any name-based "
-              "average is meaningless. Routing the trip the Wiggle exists to "
-              "serve -- Market Street at Duboce, to Haight Street at "
-              "Masonic -- gives:", "",
+    L += ["", f"A corridor is called flat when its mean absolute gradient is "
+          f"under {FLAT_MEAN_GRADE:.0%}. Gain per kilometre is shown for "
+          "scale but depends on the direction each block was drawn in, so a "
+          "railway grade climbing steadily one way shows a figure and the "
+          "same grade drawn the other way shows none.", ""]
+    sig = flat[flat["corridor"] == SIGNATURE["key"]]
+    if len(sig) and np.isfinite(sig.iloc[0].get("excess_gain_m", np.nan)):
+        w = sig.iloc[0]
+        L += [f"### {SIGNATURE['title']}", "",
+              f"{SIGNATURE['title']} is also measured as a *route*, by asking "
+              f"the model the question the corridor answers: "
+              f"{SIGNATURE['from']}, to {SIGNATURE['to']}, by bicycle. The "
+              f"direct way is {SIGNATURE['direct']}.", "",
               "| | Distance | Climb | Net rise | Excess climb | Max grade |",
               "|---|---|---|---|---|---|",
               f"| Shortest route | {w['shortest_km']:.2f} km | "
               f"{w['shortest_gain_m']:.1f} m | {w['net_rise_m']:.1f} m | "
               f"**{w['shortest_excess_gain_m']:.1f} m** | "
               f"{w['shortest_max_grade']:.1%} |",
-              f"| Flat route (the Wiggle) | {w['street_km']:.2f} km | "
+              f"| Flat route | {w['street_km']:.2f} km | "
               f"{w['gain_per_km']*w['street_km']:.1f} m | "
               f"{w['net_rise_m']:.1f} m | **{w['excess_gain_m']:.1f} m** | "
               f"{w['flat_max_grade']:.1%} |", "",
-              f"Both routes must gain the same {w['net_rise_m']:.0f} m. The "
-              f"shortest one throws away "
-              f"{w['shortest_excess_gain_m']:.0f} m of extra climbing doing "
-              f"it; the flat one throws away {w['excess_gain_m']:.0f} m. "
-              f"Verdict: **{w['verdict']}**. The model reproduces the Wiggle "
-              f"without being told it exists.", ""]
+              (f"The trip ends {abs(w['net_rise_m']):.0f} m "
+               f"{'higher' if w['net_rise_m'] > 0 else 'lower'} than it starts"
+               + (", so none of the climbing is forced. " if w['net_rise_m'] <= 0
+                  else ". Beyond that, ")
+               + f"The shortest route climbs {w['shortest_excess_gain_m']:.0f} m "
+               f"it did not have to; the flat one {w['excess_gain_m']:.0f} m, "
+               f"{100 * (1 - w['excess_gain_m'] / max(w['shortest_excess_gain_m'], 1e-9)):.0f}% "
+               f"less, for {100 * (w['street_km'] / w['shortest_km'] - 1):.0f}% "
+               f"more distance. Verdict: **{w['verdict']}**."), ""]
 
-
-    if wiggle:
-        L += ["## 4. Does the model route the Wiggle?", "",
-              "Bicycle routing from Market Street at Duboce to Haight Street "
-              "at Masonic -- the trip the Wiggle exists to serve.", "",
-              "| Objective | Distance | Climb | Max grade | Wiggle streets used |",
-              "|---|---|---|---|---|"]
-        for k, v in wiggle.items():
+    if signature:
+        L += [f"## 4. Does the model route {SIGNATURE['title']}?", "",
+              f"Bicycle routing from {SIGNATURE['from']} to "
+              f"{SIGNATURE['to']}. The corridor was not named to the model.", "",
+              "| Objective | Distance | Climb | Max grade | Share on the "
+              "corridor | Corridor streets used |",
+              "|---|---|---|---|---|---|"]
+        for k, v in signature.items():
             L.append(f"| {k} | {v['distance_m']:.0f} m | {v['gain_m']:.1f} m | "
-                     f"{v['max_grade']:.1%} | "
-                     f"{', '.join(v['wiggle_streets_used']) or '(none)'} |")
+                     f"{v['max_grade']:.1%} | {v['corridor_share']:.0%} | "
+                     f"{', '.join(v['corridor_streets_used']) or '(none)'} |")
         L += [""]
 
-    L += ["## 5. Notes on targets the model does *not* reproduce", "",
-          "- **Great Highway / western edge** measures as flat (about "
-          "1 m/km) but is *not* selected as an important corridor. This is a "
-          "legitimate result, not a failure: the corridor metric rewards "
-          "street that connects neighborhood pairs, and the Great Highway "
-          "runs along the ocean edge with the city on only one side, so very "
-          "few neighborhood pairs have any reason to use it. It is flat but "
-          "not structurally useful.",
-          "- **Nevada Street** disagrees by 10 points because its published "
-          "pitch is a stairway in OpenStreetMap; see section 2.",
-          "- **Bradford Street** disagrees by 8 points because of the "
-          "smoothing chain; see section 2.", ""]
+    miss = flat[(flat["verdict"] == "not flat") | (~flat["discovered"].astype(bool))]
+    if len(miss):
+        L += ["## 5. Targets the model does not reproduce", ""]
+        for _, r in miss.iterrows():
+            if r["verdict"] == "not flat":
+                L.append(f"- **{r['corridor']}** does not measure as flat "
+                         f"({r['mean_abs_grade']:.1%} mean gradient). The "
+                         "expectation was wrong, not the model: a ridge road "
+                         "follows the top of the ridge, and the top of an "
+                         "Atlanta ridge rolls.")
+            elif r["verdict"] == "flat":
+                L.append(f"- **{r['corridor']}** measures as flat but is not "
+                         "in the discovered corridor set. The corridor score "
+                         "rewards street that many neighborhood pairs have "
+                         "reason to use, and with one access point for each "
+                         "of 36 neighborhoods a trail can be level and still "
+                         "lie off every pair's way. Flat, but not "
+                         "structurally important at this resolution.")
+        L += [""]
 
     VALIDATION_MD.parent.mkdir(parents=True, exist_ok=True)
     VALIDATION_MD.write_text("\n".join(L))

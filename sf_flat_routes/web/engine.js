@@ -1,4 +1,4 @@
-/* San Francisco flat routes -- the routing engine.
+/* Atlanta flat routes -- the routing engine.
  *
  * The whole routable graph is embedded (see sf_flat_routes/webgraph.py), so
  * routing happens in the browser: a Dijkstra over ~160,000 directed arcs with

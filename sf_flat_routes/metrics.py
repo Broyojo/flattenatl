@@ -49,7 +49,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .config import (ELEVATION, GRADE_PERCENTILE, GRADE_THRESHOLDS,
+from .config import (CITY_SLUG, ELEVATION, GRADE_PERCENTILE, GRADE_THRESHOLDS,
                      MIN_RELIABLE_GRADE_LENGTH_M, PROCESSED_DIR)
 from .utils import get_logger, progress, step
 
@@ -58,7 +58,7 @@ log = get_logger("sf_flat_routes.metrics")
 DIRECTED_PARQUET = PROCESSED_DIR / "edges_directed.parquet"
 UNDIRECTED_PARQUET = PROCESSED_DIR / "edges_metrics.parquet"
 #: GeoPackage mirror of the processed network, for use in desktop GIS.
-NETWORK_GPKG = PROCESSED_DIR / "sf_street_network.gpkg"
+NETWORK_GPKG = PROCESSED_DIR / f"{CITY_SLUG}_street_network.gpkg"
 
 
 # --------------------------------------------------------------------------

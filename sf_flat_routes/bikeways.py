@@ -1,16 +1,19 @@
-"""SFMTA bikeway network, conflated onto the street graph, and the bike
-"stress" multiplier the route page uses to prefer calm streets.
+"""Regional bike facility inventory, conflated onto the street graph, and
+the bike "stress" multiplier the route page uses to prefer calm streets.
 
-The SFMTA Bike Network (DataSF, ``MTA_Bike_Network_Linear_Features``) is a
-set of centreline segments keyed by CNN, which Overture does not carry, so
-the match is geometric: an edge takes a facility when at least half of the
-points sampled along it lie within ``MATCH_M`` of an SFMTA segment that runs
-roughly parallel to it.  Where several facilities match, the most protected
-one wins.
+The Atlanta Regional Commission's inventory of existing bicycle and trail
+facilities (``Existing_Facilities``, April 2026) is a set of hand-drawn
+lines with no key into Overture, so the match is geometric: an edge takes a
+facility when at least half of the points sampled along it lie within
+``MATCH_M`` of an inventory line that runs roughly parallel to it.  Where
+several facilities match, the most protected one wins.
 
-Facility classes (SFMTA): I = off-street path, II = painted lane (possibly
-buffered), III = signed route / sharrows, IV = separated bikeway.
-``NEIGHBORWAY`` is a traffic-calmed class III.
+Facility types (ARC ``Facility_type``): 1 = unprotected bike lane (buffered
+or not, from ``Buffer_exist``), 2 = protected bike lane, 3 = multi-use
+trail (greenway), 4 = multi-use trail (sidepath), 5 = park trail.  The
+inventory has no signed-route or sharrow class, so the ``route`` and
+``neighborway`` codes inherited from the San Francisco version stay
+defined but unused.
 
 The stress multiplier is in equivalent metres per metre: a block that feels
 like 1.4 blocks.  It is a comfort scale, not a speed model, and it only ever
@@ -28,14 +31,12 @@ import pandas as pd
 from shapely.geometry import LineString
 from shapely.strtree import STRtree
 
-from .config import RAW_DIR
+from .download import BIKEWAYS_GEOJSON
 from .utils import get_logger, step
 
 log = get_logger("sf_flat_routes.bikeways")
 
-BIKEWAYS_GEOJSON = RAW_DIR / "sfmta_bike_network.geojson"
-
-#: distance within which an edge sample point counts as "on" an SFMTA segment
+#: distance within which an edge sample point counts as "on" an inventory line
 MATCH_M = 12.0
 #: and the largest angle between the two for them to count as the same street
 MATCH_DEG = 25.0
@@ -55,7 +56,7 @@ CLASS_STRESS = {
 }
 #: and by facility where there is one; a class III route keeps the street's
 #: own rating, slightly softened and never worse than a tertiary street,
-#: because sharrows do not change the traffic but SFMTA did pick the street
+#: because sharrows do not change the traffic but the city did pick the street
 FACILITY_STRESS = {"path": 0.8, "separated": 0.8, "buffered_lane": 0.9,
                    "lane": 1.0, "neighborway": 0.9}
 ROUTE_SOFTEN = 0.95
@@ -63,36 +64,51 @@ ROUTE_CAP = 1.2
 
 
 def _facility(props: dict) -> str:
-    sym = (props.get("symbology") or "").upper()
-    cls = (props.get("facility_t") or "").upper()
-    if sym == "BIKE PATH" or cls == "CLASS I":
+    kind = str(props.get("Facility_type") or "").strip()
+    if kind in ("3", "4", "5"):          # greenway, sidepath, park trail
         return "path"
-    if sym == "SEPARATED BIKEWAY" or cls == "CLASS IV":
+    if kind == "2":
         return "separated"
-    if sym == "BIKE LANE" or cls == "CLASS II":
-        return "buffered_lane" if (props.get("buffered") or "").upper() == "YES" else "lane"
-    if sym == "NEIGHBORWAY":
-        return "neighborway"
-    if sym == "BIKE ROUTE" or cls == "CLASS III":
-        return "route"
+    if kind == "1":
+        buffered = str(props.get("Buffer_exist") or "").strip() == "1"
+        return "buffered_lane" if buffered else "lane"
     return ""
 
 
-def load_bikeways(path: Path = BIKEWAYS_GEOJSON) -> gpd.GeoDataFrame:
-    """SFMTA bikeway segments with a ``facility`` column, in WGS84."""
+def load_bikeways(path: Path = BIKEWAYS_GEOJSON, bbox=None) -> gpd.GeoDataFrame:
+    """Inventory lines with a ``facility`` column, in WGS84.
+
+    The inventory covers the 19-county region; only lines that touch
+    ``bbox`` (the study box by default) are kept.
+    """
+    from .config import CITY_BBOX
+
+    lon_min, lon_max, lat_min, lat_max = CITY_BBOX if bbox is None else bbox
     with open(path) as fh:
         data = json.load(fh)
     rows = []
     for f in data["features"]:
         g = f.get("geometry")
-        if not g or g["type"] != "LineString" or len(g["coordinates"]) < 2:
+        if not g:
             continue
+        parts = ([g["coordinates"]] if g["type"] == "LineString"
+                 else g["coordinates"] if g["type"] == "MultiLineString" else [])
         fac = _facility(f["properties"])
-        if fac:
-            rows.append({"facility": fac, "street": f["properties"].get("streetname") or "",
-                         "geometry": LineString(g["coordinates"])})
-    gdf = gpd.GeoDataFrame(rows, crs="EPSG:4326")
-    log.info("SFMTA bikeways: %d segments, %s", len(gdf),
+        if not fac:
+            continue
+        for coords in parts:
+            if len(coords) < 2:
+                continue
+            xs = [c[0] for c in coords]
+            ys = [c[1] for c in coords]
+            if max(xs) < lon_min or min(xs) > lon_max or max(ys) < lat_min or min(ys) > lat_max:
+                continue
+            rows.append({"facility": fac,
+                         "street": (f["properties"].get("Name") or "").strip(),
+                         "geometry": LineString([c[:2] for c in coords])})
+    gdf = gpd.GeoDataFrame(rows, columns=["facility", "street", "geometry"],
+                           geometry="geometry", crs="EPSG:4326")
+    log.info("bike facility inventory: %d lines in the study box, %s", len(gdf),
              dict(gdf["facility"].value_counts()))
     return gdf
 
@@ -122,7 +138,7 @@ def conflate(edges: gpd.GeoDataFrame, bikeways: gpd.GeoDataFrame | None = None) 
     if bikeways is None:
         bikeways = load_bikeways()
     bw = bikeways.to_crs(edges.crs)
-    # one straight piece per SFMTA vertex pair, so the heading test is local
+    # one straight piece per inventory vertex pair, so the heading test is local
     pieces, piece_fac = [], []
     for fac, geom in zip(bw["facility"], bw.geometry):
         for x0, y0, x1, y1 in _segments(geom):
@@ -135,7 +151,7 @@ def conflate(edges: gpd.GeoDataFrame, bikeways: gpd.GeoDataFrame | None = None) 
     out = np.full(len(edges), "", dtype=object)
     cand = edges.index[edges["bike_ok"].fillna(False).astype(bool)] \
         if "bike_ok" in edges else edges.index
-    with step(f"conflating {len(pieces)} SFMTA bikeway pieces onto {len(cand)} edges", log):
+    with step(f"conflating {len(pieces)} bikeway pieces onto {len(cand)} edges", log):
         for i in cand:
             geom = edges.geometry.loc[i]
             if geom is None or geom.is_empty or geom.length < 1.0:
@@ -159,8 +175,8 @@ def conflate(edges: gpd.GeoDataFrame, bikeways: gpd.GeoDataFrame | None = None) 
             if matched.sum() * 2 >= len(pts):
                 facs = piece_fac[hit[matched]]
                 out[edges.index.get_loc(i)] = max(set(facs), key=lambda f: _RANK[f])
-    s = pd.Series(out, index=edges.index, name="sfmta_facility")
-    log.info("edges with an SFMTA facility: %s", dict(s[s != ""].value_counts()))
+    s = pd.Series(out, index=edges.index, name="bikeway_facility")
+    log.info("edges with an inventory facility: %s", dict(s[s != ""].value_counts()))
     return s
 
 
@@ -169,7 +185,7 @@ def stress(edges: gpd.GeoDataFrame, facility: pd.Series | None = None) -> np.nda
     cls = edges["cls"].fillna("unknown").to_numpy()
     m = np.array([CLASS_STRESS.get(c, 1.1) for c in cls])
     if facility is None:
-        facility = edges["sfmta_facility"] if "sfmta_facility" in edges else pd.Series("", index=edges.index)
+        facility = edges["bikeway_facility"] if "bikeway_facility" in edges else pd.Series("", index=edges.index)
     fac = facility.fillna("").to_numpy()
     for f, v in FACILITY_STRESS.items():
         m[fac == f] = np.minimum(m[fac == f], v)

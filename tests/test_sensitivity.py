@@ -79,16 +79,18 @@ def _fake_row(tag, **over):
         "balanced_gain_ft": 309.0, "balanced_max_grade_pct": 12.8,
         "balanced_dist_mi": 4.6,
         "network_gain_per_km": 21.0,
-        "grade_Filbert Street": 32.9, "grade_Jones Street": 31.1,
-        "grade_22nd Street": 32.6, "grade_Bradford Street": 33.1,
-        "gainkm_The Embarcadero": 1.1, "gainkm_Valencia Street": 6.0,
-        "gainkm_Market Street": 14.0,
-        "top_corridors": ["Valencia Street - X", "JFK - Y", "Mission Street"],
-        "corridor_count": 50, "top_corridor_km": 6.9,
-        "top_pass_ft": 255.0, "top_pass_pairs": 119, "top_pass_nbhd": "Golden Gate Park",
-        "n_passes": 35, "wiggle_excess_flat_m": 5.9,
-        "wiggle_excess_shortest_m": 19.2, "wiggle_discovered": True,
-        "dem_rms_m": 0.68,
+        "grade_Mattison Cove Northeast": 23.8, "grade_Abner Place Northwest": 20.0,
+        "grade_Lynn Drive Southwest": 21.4, "grade_Mary George Avenue Northwest": 20.8,
+        "gainkm_Atlanta Beltline Eastside Trail": 12.8,
+        "gainkm_DeKalb Avenue Northeast": 9.0,
+        "gainkm_Peachtree Street Northeast": 12.2,
+        "top_corridors": ["Edgewood Avenue Northeast - X", "Peachtree Street Northeast",
+                          "Cascade Road"],
+        "corridor_count": 50, "top_corridor_km": 4.8,
+        "top_pass_ft": 1018.0, "top_pass_pairs": 184, "top_pass_nbhd": "West End",
+        "n_passes": 35, "signature_excess_flat_m": 37.1,
+        "signature_excess_shortest_m": 60.9, "signature_discovered": True,
+        "dem_rms_m": 0.51,
     }
     r.update(over)
     return r
@@ -102,7 +104,7 @@ def test_writer_produces_csv_and_markdown(tmp_path, monkeypatch):
     df = pd.DataFrame([
         _fake_row("baseline"),
         _fake_row("spacing_10m", min_climb_gain_saved_pct=36.0,
-                  top_corridors=["Valencia Street - X", "Other", "Mission Street"]),
+                  top_corridors=["Edgewood Avenue Northeast - X", "Other", "Cascade Road"]),
     ]).set_index("tag")
     S._write(df)
     md = (tmp_path / "s.md").read_text()

@@ -245,15 +245,142 @@ def _split_geometries(df: pd.DataFrame):
     return rows
 
 
+#: Rail classes that never meet a street at grade without a shared node being
+#: mapped, or that run in the street itself (the Atlanta Streetcar is a tram),
+#: and so say nothing about a grade separation.
+_STREET_RUNNING_RAIL = frozenset({"tram", "light_rail", "funicular", "monorail"})
+#: Metres of street either side of a crossing whose DEM values are distrusted:
+#: half a freeway carriageway's deck plus the reach of the DEM pre-filter.
+CROSSING_PAD_M = 20.0
+
+
+def _flag_parts(geom, flags, wanted: str) -> list:
+    """The parts of a segment's geometry that carry ``wanted`` in its flags.
+
+    A flag with a ``between`` range applies to that stretch only (a long
+    street with one short bridge on it); without one, to the whole segment.
+    """
+    from shapely.ops import substring
+
+    parts = []
+    for entry in _as_list(flags):
+        entry = _as_dict(entry)
+        if wanted not in _as_list(entry.get("values")):
+            continue
+        between = _as_list(entry.get("between"))
+        if len(between) == 2:
+            parts.append(substring(geom, float(between[0]), float(between[1]),
+                                   normalized=True))
+        else:
+            parts.append(geom)
+    return [p for p in parts if p is not None and not p.is_empty and p.length > 0]
+
+
+def find_dem_gaps(edges, raw_segments: "pd.DataFrame",
+                  pad_m: float = CROSSING_PAD_M) -> list:
+    """Stretches of each edge where the bare-earth DEM is not the street.
+
+    Two situations, both found from geometry: a routable edge that crosses
+    another line without sharing a node with it is grade-separated from it.
+
+    * The edge passes **under a bridge** (any segment flagged ``is_bridge``).
+      Lidar cannot see the ground beneath a deck, and the bare-earth surface
+      there is interpolated from whatever ground was seen on either side,
+      which for a freeway or railway is its embankment.  Windsor Street
+      under I-20 came out with an 11 m hump in the middle of a level block.
+    * The edge crosses a **freeway or railway that is not on a bridge or in
+      a tunnel**.  A street never meets a freeway at grade, so the edge must
+      itself be a bridge that the source data does not flag, and the DEM
+      under it is the freeway cut or the track bed.
+
+    Returns, per edge, a flat list ``[lo0, hi0, lo1, hi1, ...]`` of distances
+    along the edge in metres (empty for most).  ``elevation.py`` blanks the
+    profile there and interpolates across from the samples either side.
+    Edges already flagged as structures are skipped: they get a full ramp.
+    """
+    import geopandas as gpd
+    import shapely
+
+    t = raw_segments
+    geoms = gpd.GeoSeries(shapely.from_wkb(t["geometry"].values),
+                          crs=CRS_GEOGRAPHIC).to_crs(edges.crs).values
+    cls = t["class"].fillna("unknown").to_numpy()
+    subtype = t["subtype"].to_numpy()
+    rail_flags = t["rail_flags"].to_numpy() if "rail_flags" in t.columns \
+        else np.full(len(t), None, dtype=object)
+    road_flags = t["road_flags"].to_numpy()
+    levels = t["level_rules"].to_numpy() if "level_rules" in t.columns \
+        else np.full(len(t), None, dtype=object)
+
+    over: list = []          # decks: anything beneath them is suspect
+    open_cut: list = []      # freeways and railways on the ground
+    for g, c, st, rf, lf, lv in zip(geoms, cls, subtype, road_flags, rail_flags, levels):
+        if g is None or g.is_empty:
+            continue
+        flags = rf if st == "road" else lf
+        decks = _flag_parts(g, flags, "is_bridge")
+        over.extend(decks)
+        heavy = (st == "road" and c == "motorway") or \
+                (st == "rail" and c not in _STREET_RUNNING_RAIL)
+        if not heavy:
+            continue
+        tunnels = _flag_parts(g, flags, "is_tunnel")
+        # a level other than the ground is a structure even where the flag
+        # is missing, which on rail it often is
+        off_ground = any(_as_dict(r).get("value") not in (None, 0)
+                         for r in _as_list(lv))
+        if not decks and not tunnels and not off_ground:
+            open_cut.append(g)
+        elif decks or tunnels:
+            # the unflagged remainder of a partly flagged line is on the ground
+            covered = shapely.unary_union(decks + tunnels).buffer(1.0)
+            rest = g.difference(covered)
+            if not rest.is_empty and rest.length > 5.0 and not off_ground:
+                open_cut.append(rest)
+
+    others = np.array(over + open_cut, dtype=object)
+    out: list = [[] for _ in range(len(edges))]
+    if not len(others):
+        return out
+    egeoms = edges.geometry.values
+    skip = edges["is_structure"].to_numpy()
+    tree = shapely.STRtree(others)
+    ei, oi = tree.query(egeoms, predicate="crosses")
+    spans: dict[int, list[tuple[float, float]]] = {}
+    for i, j in zip(ei, oi):
+        if skip[i]:
+            continue
+        eg = egeoms[i]
+        for pt in shapely.get_parts(shapely.intersection(eg, others[j])):
+            if pt.is_empty:
+                continue
+            d = float(eg.project(pt.representative_point()))
+            spans.setdefault(int(i), []).append((d - pad_m, d + pad_m))
+    for i, ivs in spans.items():
+        ivs.sort()
+        merged = [list(ivs[0])]
+        for lo, hi in ivs[1:]:
+            if lo <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], hi)
+            else:
+                merged.append([lo, hi])
+        L = float(egeoms[i].length)
+        out[i] = [float(np.clip(v, 0.0, L)) for iv in merged for v in iv]
+    log.info("  %d edges cross under a deck or over an unflagged freeway/railway "
+             "(%d decks, %d ground-level freeway and rail lines)",
+             len(spans), len(over), len(open_cut))
+    return out
+
+
 def build_edges(segments_path: Path, force: bool = False,
                 clip_to_city: bool = True) -> "pd.DataFrame":
     """Produce the undirected edge table with geometry, class and access.
 
-    The Overture extract covers a bounding box, which also catches the Marin
-    headlands (reachable only across the Golden Gate Bridge and partly
-    outside the lidar footprint) and northern San Mateo County.  Clipping to
-    the union of the San Francisco neighborhood polygons keeps the analysis
-    to the city, which is what the corridor and pass analysis is about.
+    The Overture extract covers a bounding box, which also catches Decatur,
+    East Point, Sandy Springs, Cobb County across the river and everything
+    else that surrounds the city's ragged limits.  Clipping to the City of
+    Atlanta boundary keeps the analysis to the city, which is what the
+    corridor and pass analysis is about.
     """
     import geopandas as gpd
 
@@ -261,9 +388,9 @@ def build_edges(segments_path: Path, force: bool = False,
         log.info("cached %s", EDGES_PARQUET.name)
         return gpd.read_parquet(EDGES_PARQUET)
 
-    df = load_segments(segments_path)
+    raw = load_segments(segments_path)
     with step("filtering segments", log):
-        df = _base_filter(df)
+        df = _base_filter(raw)
     with step("splitting segments at connectors", log):
         rows = _split_geometries(df)
 
@@ -275,7 +402,7 @@ def build_edges(segments_path: Path, force: bool = False,
 
     if clip_to_city:
         from .neighborhoods import city_boundary
-        with step("clipping network to the San Francisco city boundary", log):
+        with step("clipping network to the city boundary", log):
             boundary = city_boundary(buffer_m=250.0)
             mid = gdf.geometry.interpolate(0.5, normalized=True)
             keep = gpd.GeoSeries(mid, crs=gdf.crs).within(boundary)
@@ -287,6 +414,8 @@ def build_edges(segments_path: Path, force: bool = False,
     gdf["is_bridge"] = gdf["flags"].apply(lambda f: "is_bridge" in f)
     gdf["is_tunnel"] = gdf["flags"].apply(lambda f: "is_tunnel" in f)
     gdf["is_structure"] = gdf["is_bridge"] | gdf["is_tunnel"]
+    with step("finding crossings where the DEM is not the street", log):
+        gdf["dem_gaps"] = find_dem_gaps(gdf, raw)
 
     # per-mode access
     with step("evaluating per-mode access restrictions", log):
@@ -303,7 +432,9 @@ def build_edges(segments_path: Path, force: bool = False,
             log.info("  %s: %d of %d edges routable", mode_name,
                      int(gdf[f"{mode_name}_ok"].sum()), len(gdf))
 
-    # bicycle infrastructure / low-stress proxy (SFMTA data unavailable)
+    # bicycle infrastructure / low-stress proxy from OSM attributes; the
+    # route page's comfort weighting uses the regional inventory instead
+    # (see bikeways.py)
     gdf["bike_facility"] = np.where(
         gdf["cls"] == "cycleway", "dedicated_cycleway",
         np.where(gdf["cls"].isin(["path", "footway"]) & gdf["bike_allowed"],
@@ -318,7 +449,7 @@ def build_edges(segments_path: Path, force: bool = False,
             "length_m", "is_bridge", "is_tunnel", "is_structure",
             "walk_ok", "walk_oneway", "walk_restricted",
             "bike_ok", "bike_oneway", "bike_restricted",
-            "bike_facility", "low_stress", "geometry"]
+            "bike_facility", "low_stress", "dem_gaps", "geometry"]
     gdf = gdf[keep]
     gdf.to_parquet(EDGES_PARQUET)
     log.info("wrote %s (%d edges)", EDGES_PARQUET.name, len(gdf))

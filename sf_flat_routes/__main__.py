@@ -8,7 +8,7 @@
     python -m sf_flat_routes map            # interactive + static maps
     python -m sf_flat_routes report         # written analysis of the findings
     python -m sf_flat_routes all            # everything, in order
-    python -m sf_flat_routes route --from Mission --to "Outer Sunset"
+    python -m sf_flat_routes route --from Midtown --to "Grant Park"
 
 Every stage caches its output, so re-running is cheap; pass ``--force`` to
 recompute a stage from scratch.
@@ -33,8 +33,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m sf_flat_routes",
-        description="San Francisco flat-route analysis: discovering the "
-                    "city's low-elevation street network.",
+        description="Atlanta flat-route analysis: discovering the "
+                    "city's flat street network.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)

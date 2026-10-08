@@ -1,10 +1,10 @@
 """Neighborhood boundaries, city boundary and representative access points.
 
 Choosing an origin/destination point per neighborhood matters more than it
-looks.  A polygon centroid can easily land in the middle of a park, on a
-hillside with no street, in the water, or (for a concave neighborhood like
-the Presidio or Lakeshore) outside the neighborhood altogether.  Routing from
-such a point produces garbage distances.
+looks.  A polygon centroid can easily land in the middle of a park, in a
+rail yard or creek bottom with no street, or (for a concave neighborhood)
+outside the neighborhood altogether.  Routing from such a point produces
+garbage distances.
 
 The representative point is therefore chosen as follows:
 
@@ -29,9 +29,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import (ANALYSIS, CRS_PROJECTED, EXCLUDED_NEIGHBORHOODS,
-                     PROCESSED_DIR)
-from .download import NEIGHBORHOODS_GEOJSON
+from .config import (ANALYSIS, ANALYSIS_NEIGHBORHOODS, CRS_PROJECTED,
+                     EXCLUDED_NEIGHBORHOODS, PROCESSED_DIR)
+from .download import CITY_LIMITS_GEOJSON, NEIGHBORHOODS_GEOJSON
 from .utils import get_logger, step
 
 log = get_logger("sf_flat_routes.neighborhoods")
@@ -54,7 +54,9 @@ def load_neighborhoods(path: Path = NEIGHBORHOODS_GEOJSON, force: bool = False):
 
     gdf = gpd.read_file(path)
     gdf = gdf.rename(columns={"name": "neighborhood"})
-    gdf = gdf[["neighborhood", "geometry"]].copy()
+    if "npu" not in gdf.columns:
+        gdf["npu"] = ""
+    gdf = gdf[["neighborhood", "npu", "geometry"]].copy()
     gdf = gdf.to_crs(CRS_PROJECTED)
     gdf["geometry"] = gdf.geometry.buffer(0)          # repair any self-touching rings
     gdf["area_km2"] = gdf.geometry.area / 1e6
@@ -67,19 +69,43 @@ def load_neighborhoods(path: Path = NEIGHBORHOODS_GEOJSON, force: bool = False):
 
 
 def city_boundary(neighborhoods=None, buffer_m: float = 250.0):
-    """Union of the neighborhood polygons, optionally buffered."""
+    """The city limits, optionally buffered.
+
+    Atlanta's neighborhood polygons leave about 20 km2 of the city unassigned
+    (rail yards, the river edge, recently annexed land), so the boundary is
+    the city's own limits rather than their union. Passing ``neighborhoods``
+    or having no city limits file falls back to the union.
+    """
+    import geopandas as gpd
     from shapely.ops import unary_union
 
-    nb = load_neighborhoods() if neighborhoods is None else neighborhoods
-    geom = unary_union(nb.geometry.values)
+    if neighborhoods is None and CITY_LIMITS_GEOJSON.exists():
+        city = gpd.read_file(CITY_LIMITS_GEOJSON).to_crs(CRS_PROJECTED)
+        geom = unary_union(city.geometry.buffer(0).values)
+    else:
+        nb = load_neighborhoods() if neighborhoods is None else neighborhoods
+        geom = unary_union(nb.geometry.values)
     if buffer_m:
         geom = geom.buffer(buffer_m)
     return geom
 
 
 def analysis_neighborhoods(neighborhoods=None):
-    """Neighborhoods used for pair analysis (excludes unreachable islands)."""
+    """Neighborhoods used for pair analysis.
+
+    The ``ANALYSIS_NEIGHBORHOODS`` subset when one is configured and present
+    in the table (a table without any of them, as in tests, is used whole),
+    less anything in ``EXCLUDED_NEIGHBORHOODS``.
+    """
     nb = load_neighborhoods() if neighborhoods is None else neighborhoods
+    if ANALYSIS_NEIGHBORHOODS:
+        picked = nb["neighborhood"].isin(ANALYSIS_NEIGHBORHOODS)
+        missing = sorted(set(ANALYSIS_NEIGHBORHOODS) - set(nb["neighborhood"]))
+        if picked.any():
+            if missing:
+                log.warning("analysis neighborhoods not in the boundary set: %s",
+                            ", ".join(missing))
+            nb = nb[picked]
     return nb[~nb["neighborhood"].isin(EXCLUDED_NEIGHBORHOODS)].reset_index(drop=True)
 
 
@@ -111,8 +137,8 @@ def choose_representative_points(edges, neighborhoods=None, mode: str = "walk",
 
     ``valid_nodes`` restricts candidates to nodes that are actually routable
     for this mode (the largest strongly connected component of the mode's
-    graph).  Without it a neighborhood such as the Presidio can be handed a
-    node that exists only on a footpath, which is unreachable by bicycle.
+    graph).  Without it a neighborhood that is mostly parkland can be handed
+    a node that exists only on a footpath, which is unreachable by bicycle.
     """
     import geopandas as gpd
     from shapely.geometry import Point

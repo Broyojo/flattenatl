@@ -5,6 +5,7 @@ reproducible and the cost model is auditable.
 """
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -23,14 +24,23 @@ PROCESSED_DIR = Path(_RUN_DIR) / "processed" if _RUN_DIR else DATA_DIR / "proces
 OUTPUT_DIR = Path(_RUN_DIR) / "outputs" if _RUN_DIR else PROJECT_ROOT / "outputs"
 #: The route finder as a static site, deployed to GitHub Pages from here.
 SITE_DIR = Path(_RUN_DIR) / "site" if _RUN_DIR else PROJECT_ROOT / "site"
-#: The product is "flattensf"; the Python package keeps its older name.
-PRODUCT_NAME = "Flatten SF"
-REPO_URL = "https://github.com/almostimplemented/flattensf"
-#: The host the site answers on. Pages serves the custom domain on www and
-#: redirects the apex to it, so links, the canonical URL and the social
-#: preview image all use www; the CNAME file carries the same host.
-SITE_DOMAIN = "www.flattensf.com"
-SITE_URL = f"https://{SITE_DOMAIN}/"
+#: The product is "flattenatl", a port of flattensf to Atlanta; the Python
+#: package keeps the upstream name so that upstream changes still merge.
+PRODUCT_NAME = "Flatten ATL"
+CITY_NAME = "Atlanta"
+#: Short tag used in cached file names and deliverables (``atl_flat_*``).
+CITY_SLUG = "atl"
+REPO_URL = "https://github.com/Broyojo/flattenatl"
+UPSTREAM_URL = "https://github.com/almostimplemented/flattensf"
+#: The host the site answers on, or "" for none. With no custom domain of
+#: its own the site is a GitHub Pages project page, no CNAME file is
+#: written, and the canonical URL and social preview tags point at
+#: ``SITE_URL``. The account's Pages site has the custom domain
+#: broyojo.com, so project pages are served under it and
+#: broyojo.github.io/flattenatl redirects there.
+SITE_DOMAIN = ""
+SITE_URL = (f"https://{SITE_DOMAIN}/" if SITE_DOMAIN
+            else "https://broyojo.com/flattenatl/")
 
 for _d in (RAW_DIR, PROCESSED_DIR, OUTPUT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -41,22 +51,63 @@ for _d in (RAW_DIR, PROCESSED_DIR, OUTPUT_DIR):
 #: Geographic CRS of the source vector data (Overture) and of all map output.
 CRS_GEOGRAPHIC = "EPSG:4326"
 #: Projected CRS used for *every* length, slope and distance computation.
-#: NAD83 / UTM zone 10N -- the native CRS of the USGS 3DEP 1 m tiles for SF,
-#: so elevation sampling needs no reprojection of the raster.
-CRS_PROJECTED = "EPSG:26910"
+#: NAD83 / UTM zone 16N -- the native CRS of the USGS 3DEP 1 m tiles for
+#: Atlanta, so elevation sampling needs no reprojection of the raster.
+CRS_PROJECTED = "EPSG:26916"
 
 # --------------------------------------------------------------------------
 # Study area
 # --------------------------------------------------------------------------
 #: Analysis bounding box (lon_min, lon_max, lat_min, lat_max).
-#: Covers the City & County of San Francisco land area plus a small margin.
-#: Deliberately excludes the Marin headlands and the Farallones.
-SF_BBOX = (-122.5200, -122.3300, 37.6950, 37.8350)
+#: Covers the City of Atlanta's limits (which run from the Chattahoochee to
+#: past East Lake, and from Chastain Park down to the airport) plus a small
+#: margin. Decatur, Sandy Springs, East Point and the rest of the metro
+#: area are outside the city and outside the study.
+CITY_BBOX = (-84.5600, -84.2800, 33.6400, 33.8950)
+#: Metres per degree of longitude at the middle of the study area, for the
+#: few places that measure short distances in degrees.
+LON_M_PER_DEG = 111320.0 * math.cos(math.radians((CITY_BBOX[2] + CITY_BBOX[3]) / 2))
+LAT_M_PER_DEG = 111000.0
 
-#: Treasure Island / Yerba Buena Island are part of SF but are only reachable
-#: via the Bay Bridge (no pedestrian access to the western span) so they are
-#: excluded from neighborhood-pair routing.
-EXCLUDED_NEIGHBORHOODS = ("Treasure Island/YBI",)
+#: Neighborhoods left out of neighborhood-pair routing. Atlanta has no
+#: counterpart to San Francisco's Treasure Island: every part of the city
+#: is reachable on foot.
+EXCLUDED_NEIGHBORHOODS = ()
+
+#: Atlanta has 248 official neighborhoods, some of them a few blocks across,
+#: which is far too many for an all-pairs analysis (61,000 ordered pairs) and
+#: too uneven to stand for the city. The pair matrix, corridor scoring and
+#: pass analysis therefore run between these 36: at least one from each of
+#: the 25 Neighborhood Planning Units, so every part of the city is an
+#: origin, and a second from the larger or more travelled ones. All 248
+#: polygons are still used to say where a corridor, pass or barrier is.
+ANALYSIS_NEIGHBORHOODS = (
+    "Paces", "Chastain Park",                    # NPU A
+    "North Buckhead", "Buckhead Village",        # B
+    "Peachtree Battle Alliance",                 # C
+    "Bolton", "Underwood Hills",                 # D
+    "Midtown", "Georgia Tech",                   # E
+    "Morningside/Lenox Park", "Virginia Highland",   # F
+    "West Highlands",                            # G
+    "Adamsville",                                # H
+    "Collier Heights", "Cascade Heights",        # I
+    "Grove Park",                                # J
+    "Mozley Park",                               # K
+    "Vine City",                                 # L
+    "Downtown", "Old Fourth Ward",               # M
+    "Inman Park", "Candler Park",                # N
+    "Kirkwood", "East Lake",                     # O
+    "Ben Hill",                                  # P
+    "Midwest Cascade",                           # Q
+    "Greenbriar",                                # R
+    "Oakland City",                              # S
+    "West End",                                  # T
+    "Summerhill", "Pittsburgh",                  # V
+    "Grant Park", "East Atlanta",                # W
+    "Sylvan Hills",                              # X
+    "Lakewood Heights",                          # Y
+    "South River Gardens",                       # Z
+)
 
 # --------------------------------------------------------------------------
 # Elevation sampling / smoothing
@@ -339,32 +390,31 @@ ANALYSIS = _apply(AnalysisConfig(), _OV)
 # Representative neighborhood pairs highlighted in the written analysis
 # --------------------------------------------------------------------------
 FEATURED_PAIRS = (
-    ("Mission", "Outer Sunset"),
-    ("Inner Richmond", "Downtown/Civic Center"),
-    ("Mission", "Marina"),
-    ("Bayview", "Golden Gate Park"),
-    ("Noe Valley", "Financial District"),
-    ("Outer Richmond", "Mission"),
-    ("Excelsior", "South of Market"),
-    ("Haight Ashbury", "Financial District"),
-    ("Parkside", "Downtown/Civic Center"),
-    ("Bernal Heights", "Marina"),
-    ("Potrero Hill", "Western Addition"),
-    ("West of Twin Peaks", "Downtown/Civic Center"),
-    ("Visitacion Valley", "Mission"),
-    ("Chinatown", "Inner Sunset"),
+    ("Midtown", "Grant Park"),
+    ("Downtown", "Buckhead Village"),
+    ("Georgia Tech", "Inman Park"),
+    ("Chastain Park", "West End"),
+    ("West End", "Old Fourth Ward"),
+    ("Virginia Highland", "Downtown"),
+    ("East Atlanta", "Midtown"),
+    ("Kirkwood", "Downtown"),
+    ("Adamsville", "Underwood Hills"),
+    ("Grove Park", "Midtown"),
+    ("Candler Park", "Georgia Tech"),
+    ("Summerhill", "Morningside/Lenox Park"),
+    ("Collier Heights", "Downtown"),
+    ("Paces", "Downtown"),
 )
 
-#: Validation targets -- well known flat corridors and steep streets used as
-#: sanity checks on the elevation model (see ``validate`` command).
+#: Validation targets -- well known flat corridors used as sanity checks on
+#: the elevation model (see ``validate.KNOWN_FLAT`` for the street lists).
+#: Atlanta has no published street grades to check steep streets against.
 VALIDATION_FLAT = (
-    "The Wiggle", "Market Street", "Valencia Street", "The Embarcadero",
-    "Great Highway", "Alemany Boulevard", "San Jose Avenue", "Illinois Street",
+    "BeltLine Eastside Trail", "BeltLine Westside Trail",
+    "Proctor Creek Greenway", "DeKalb Avenue", "Marietta Street",
+    "Lee Street", "Murphy Avenue", "Peachtree Street",
 )
-VALIDATION_STEEP = (
-    "Filbert Street", "22nd Street", "Jones Street", "Divisadero Street",
-    "Lombard Street", "Duboce Avenue",
-)
+VALIDATION_STEEP = ()
 
 
 def profile(name: str) -> CostWeights:

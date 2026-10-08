@@ -244,7 +244,7 @@ def build_payload(edges, directed: pd.DataFrame) -> dict:
                            .clip(0, 6000), DM),
             "lowstress": edges["low_stress"].fillna(False).to_numpy().astype("<u1"),
             # bike comfort multiplier, hundredths (100 = an ordinary block),
-            # from the SFMTA bikeway network where it is on disk
+            # from the regional bike facility inventory where it is on disk
             "stress": np.clip(np.round(bike_stress(edges, facility) * STRESS_Q),
                               1, 255).astype("<u1"),
         }

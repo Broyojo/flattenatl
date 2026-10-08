@@ -1,4 +1,4 @@
-"""Passes, saddles and barriers: where San Francisco's geography forces a climb.
+"""Passes, saddles and barriers: where Atlanta's geography forces a climb.
 
 Method
 ------
@@ -18,12 +18,14 @@ spanning tree, and its critical edges are precisely the city's passes.
 
 Rather than asking about arbitrary node pairs, the analysis first identifies
 the **lowland basins**: connected components of the street network lying
-entirely below a low-elevation threshold.  These are the flat districts that
-people actually travel between -- the northeastern waterfront plain, the
-Mission/SoMa flats, the Sunset, the Richmond, the Bayview flats, and so on.
-The pass tree over those basins then answers, for every pair of flat
-districts, how much climbing is geometrically unavoidable and exactly which
-block you must climb it on.
+entirely below a low-elevation threshold.  In San Francisco, where this
+was written, those are the flat districts people travel between.  Atlanta
+is the other way up: the city was laid out along its ridges, the railways
+and Peachtree follow the divides, and the low ground is the creek valleys
+between them -- Peachtree Creek and its forks, Proctor Creek, Utoy Creek,
+the South River, the Chattahoochee bottoms.  The pass tree over those
+valleys answers, for every pair of them, how high the ridge between them
+has to be crossed and exactly which block it is crossed on.
 
 Barriers are the complementary view: steep edges that carry a large share of
 inter-neighborhood traffic because no flatter alternative exists.  A street
@@ -49,11 +51,13 @@ BARRIERS_CSV = OUTPUT_DIR / "barriers.csv"
 BASINS_GEOJSON = OUTPUT_DIR / "lowland_basins.geojson"
 
 #: Elevation (m) below which street is considered "lowland" when delineating
-#: basins.  25 m was tried first and proved too generous: the 25 m contour
-#: links the Mission, SoMa, the northeastern waterfront and the Bayview into
-#: a single 817 km "basin", which says nothing useful.  15 m separates the
-#: real flat districts while still following the valley floors.
-BASIN_ELEV_M = 15.0
+#: basins.  Atlanta's streets run from 230 m at the Chattahoochee to 330 m
+#: on the ridges, with a median of 290 m, so the threshold is a contour
+#: within that range rather than a height above the sea.  260 m (the lowest
+#: tenth of the network) separates the creek valleys: at 265 m the Peachtree
+#: Creek basin has already doubled to 261 km of street, and at 270 m it has
+#: swallowed the north side whole (616 km), which says nothing useful.
+BASIN_ELEV_M = 260.0
 #: A basin must contain at least this much street to count as a district.
 BASIN_MIN_KM = 2.0
 
@@ -361,7 +365,7 @@ def rank_critical_passes(pass_matrix: pd.DataFrame, edges, neighborhoods):
     """Aggregate the pass matrix onto edges: the city's true saddles.
 
     An edge that is the binding constraint for many neighborhood pairs is a
-    pass that San Francisco's topography genuinely forces traffic over.
+    pass that the city's topography genuinely forces traffic over.
     """
     import geopandas as gpd
 

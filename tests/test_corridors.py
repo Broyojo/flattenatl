@@ -17,7 +17,7 @@ def edge_table(rows):
              "geometry": LineString([(i * 100, 0), (i * 100 + 100, 0)])}
         d.update(r)
         recs.append(d)
-    return gpd.GeoDataFrame(recs, geometry="geometry", crs="EPSG:26910")
+    return gpd.GeoDataFrame(recs, geometry="geometry", crs="EPSG:26916")
 
 
 def usage_table(rows):

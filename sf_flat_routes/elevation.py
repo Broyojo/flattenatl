@@ -3,8 +3,8 @@
 Accuracy of the climbing metrics rests entirely on this module, so the
 method is spelled out here and mirrored in the README.
 
-1.  **Mosaic.**  The four 1 m 3DEP tiles are merged and clipped to the study
-    area once, in their native EPSG:26910, and cached.  No raster
+1.  **Mosaic.**  The 1 m 3DEP tiles are merged and clipped to the study
+    area once, in their native EPSG:26916, and cached.  No raster
     reprojection is ever performed, so no resampling error is introduced.
 
 2.  **Noise suppression (spatial).**  A Gaussian filter of sigma = 3 m is
@@ -31,6 +31,11 @@ method is spelled out here and mirrored in the README.
     the reliable nodes as boundary conditions -- i.e. the deck is modelled as
     the smoothest ramp consistent with where it meets the ground.
 
+    The same goes, locally, for a street that passes *under* a deck or
+    over a freeway or railway the source data does not flag as bridged
+    (``network.find_dem_gaps``): the samples within the crossing are
+    discarded and interpolated along the street from either side.
+
 5.  **Noise suppression (profile).**  Profiles with at least 5 samples get a
     Savitzky-Golay filter (order 2) over a ~50 m window.
 
@@ -45,18 +50,25 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import CRS_PROJECTED, ELEVATION, PROCESSED_DIR, SF_BBOX
+from .config import CITY_BBOX, CITY_SLUG, CRS_PROJECTED, ELEVATION, PROCESSED_DIR
 from .download import DEM_DIR
 from .utils import get_logger, progress, step
 
 log = get_logger("sf_flat_routes.elevation")
 
-DEM_MOSAIC = PROCESSED_DIR / "dem_sf_1m.tif"
+DEM_MOSAIC = PROCESSED_DIR / f"dem_{CITY_SLUG}_1m.tif"
 PROFILES_NPZ = PROCESSED_DIR / "edge_profiles.npz"
 
 #: Standard deviation (m) of the Gaussian pre-filter applied to the DEM
 #: (configured in ``config.ElevationConfig.dem_sigma_m``).
 DEM_SMOOTH_SIGMA_M = ELEVATION.dem_sigma_m
+#: Length (m) of street next to a bridge or tunnel end whose DEM values are
+#: distrusted. The mapped end of a bridge is rarely the abutment: it usually
+#: sits a few metres out over the cut, where the bare-earth surface has
+#: already fallen away, so the approach reads as a level street that drops
+#: off a ledge. Northside Drive, Lakewood Avenue and Ivan Allen Jr Boulevard
+#: each lost 5 m that way in their last 20 m.
+ABUTMENT_PAD_M = 25.0
 
 
 # --------------------------------------------------------------------------
@@ -77,7 +89,7 @@ def build_dem_mosaic(force: bool = False) -> Path:
         raise FileNotFoundError(
             f"no DEM tiles in {DEM_DIR}; run `python -m sf_flat_routes download`")
 
-    lon_min, lon_max, lat_min, lat_max = SF_BBOX
+    lon_min, lon_max, lat_min, lat_max = CITY_BBOX
     bounds = transform_bounds("EPSG:4326", CRS_PROJECTED,
                               lon_min, lat_min, lon_max, lat_max)
     # pad so that edge densification never samples outside the mosaic
@@ -353,6 +365,9 @@ def sample_edge_profiles(edges, sampler: DemSampler | None = None,
 
     edge_ids = np.asarray(edges["edge_id"].values)
     is_struct = np.asarray(edges["is_structure"].values)
+    # stretches where the street runs under a deck or over an unflagged cut
+    # (see network.find_dem_gaps); absent on tables built before that existed
+    gaps = list(edges["dem_gaps"]) if "dem_gaps" in edges.columns else None
     us = list(edges["u"]); vs = list(edges["v"])
     row_of = {int(e): i for i, e in enumerate(edge_ids)}
 
@@ -366,7 +381,40 @@ def sample_edge_profiles(edges, sampler: DemSampler | None = None,
 
     out_dist: list[np.ndarray] = [None] * len(edge_ids)
     out_elev: list[np.ndarray] = [None] * len(edge_ids)
-    n_struct_fixed = n_gapfilled = n_unresolved = 0
+    n_struct_fixed = n_gapfilled = n_unresolved = n_crossings = 0
+
+    # ---- abutments ------------------------------------------------------
+    # A node where a deck meets the ground takes its elevation from the
+    # approach, not from the DEM cell under the node: a deck is at or above
+    # the ground leading to it, a tunnel floor at or below, so the highest
+    # (lowest) sample within ABUTMENT_PAD_M along each approach is used.
+    abut_at: dict[int, list[bool]] = {}
+    if cfg.interpolate_structures:
+        is_tunnel = (np.asarray(edges["is_tunnel"].values)
+                     if "is_tunnel" in edges.columns else np.zeros(len(edge_ids), bool))
+        deck_nodes: dict[str, bool] = {}          # node -> touches a tunnel
+        for i in np.flatnonzero(is_struct):
+            for n in (us[i], vs[i]):
+                deck_nodes[n] = deck_nodes.get(n, False) or bool(is_tunnel[i])
+        est: dict[str, list[float]] = {}
+        for i in np.flatnonzero(~is_struct):
+            at = [us[i] in deck_nodes, vs[i] in deck_nodes]
+            if not any(at):
+                continue
+            a, b = offsets[i], offsets[i + 1]
+            d = cat_dist[a:b]; z = cat_z[a:b]
+            for end, n in ((0, us[i]), (1, vs[i])):
+                if not at[end]:
+                    continue
+                near = (d <= ABUTMENT_PAD_M) if end == 0 else (d >= d[-1] - ABUTMENT_PAD_M)
+                vals = z[near & np.isfinite(z)]
+                if vals.size:
+                    est.setdefault(n, []).append(
+                        float(vals.min() if deck_nodes[n] else vals.max()))
+            abut_at[int(i)] = at
+        for n, vals in est.items():
+            node_elev[n] = float(np.mean(vals))
+        log.info("  %d deck ends take their elevation from the approach", len(est))
 
     runs = contiguous_runs(edges)
     for eids in progress(runs, desc="  profiles", total=len(runs), unit="run"):
@@ -406,6 +454,35 @@ def sample_edge_profiles(edges, sampler: DemSampler | None = None,
                     run_z[lo:hi] = z0 + (z1 - z0) * frac
                     n_struct_fixed += 1
 
+        # crossings: blank the stretch under a deck (or over an unflagged
+        # cut) and let the gap filler below interpolate along the street
+        if cfg.interpolate_structures and gaps is not None:
+            for k, i in enumerate(rows):
+                g = gaps[i]
+                if is_struct[i] or g is None or len(g) < 2:
+                    continue
+                lo, hi = ranges[k]
+                dd = run_d[lo:hi] - run_d[lo]
+                for a, b in zip(g[0::2], g[1::2]):
+                    run_z[lo:hi][(dd >= a) & (dd <= b)] = np.nan
+                    n_crossings += 1
+
+        # abutments: the approach's last metres are redrawn from the last
+        # trusted sample up to the deck end's own elevation
+        for k, i in enumerate(rows):
+            at = abut_at.get(i)
+            if at is None:
+                continue
+            lo, hi = ranges[k]
+            dd = run_d[lo:hi] - run_d[lo]
+            seg = run_z[lo:hi]
+            if at[0] and np.isfinite(node_elev.get(us[i], np.nan)):
+                seg[dd < min(ABUTMENT_PAD_M, dd[-1])] = np.nan
+                seg[0] = node_elev[us[i]]
+            if at[1] and np.isfinite(node_elev.get(vs[i], np.nan)):
+                seg[dd > max(dd[-1] - ABUTMENT_PAD_M, 0.0)] = np.nan
+                seg[-1] = node_elev[vs[i]]
+
         if not np.all(np.isfinite(run_z)):
             good = np.isfinite(run_z)
             if good.any():
@@ -431,8 +508,9 @@ def sample_edge_profiles(edges, sampler: DemSampler | None = None,
             out_dist[i] = (d - d[0]).astype("float32")
             out_elev[i] = run_z[lo:hi].astype("float32")
 
-    log.info("  linear ramp applied to %d structure edges; %d runs gap-filled",
-             n_struct_fixed, n_gapfilled)
+    log.info("  linear ramp applied to %d structure edges; %d crossings "
+             "bridged; %d runs gap-filled", n_struct_fixed, n_crossings,
+             n_gapfilled)
     if n_unresolved:
         log.warning("  %d edges have no recoverable elevation and carry NaN; "
                     "they are excluded when the metrics table is built",

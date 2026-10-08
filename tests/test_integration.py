@@ -62,10 +62,11 @@ def test_no_edge_exceeds_the_plausible_grade_clip(edges):
     assert edges["max_abs_grade"].max() <= ELEVATION.max_plausible_grade + 1e-9
 
 
-def test_elevations_are_in_a_sane_range_for_san_francisco(edges):
-    # Mount Davidson is 283 m; nothing should sit far below sea level
-    assert edges["elev_max"].max() < 300
-    assert edges["elev_min"].min() > -15
+def test_elevations_are_in_a_sane_range_for_atlanta(edges):
+    # the Chattahoochee leaves the city at about 229 m and the highest ground
+    # is about 330 m; a tile in the wrong datum or a nodata leak shows here
+    assert edges["elev_max"].max() < 345
+    assert edges["elev_min"].min() > 215
 
 
 def test_distance_above_thresholds_are_nested_and_bounded(directed):
@@ -84,23 +85,43 @@ def test_stairways_are_never_bicycle_traversable(directed):
 
 
 def test_known_flat_and_steep_streets_are_correctly_separated(edges):
-    def gain_per_km(name):
-        sub = edges[edges["name"] == name]
-        km = sub["length_m"].sum() / 1000
-        return sub["cum_gain_fwd"].sum() / km if km else np.nan
+    def mean_grade(names):
+        sub = edges[edges["name"].isin(names)]
+        w = sub["length_m"].to_numpy()
+        return float((sub["avg_grade_fwd"].abs().to_numpy() * w).sum() / w.sum())
 
-    flat = gain_per_km("The Embarcadero")
-    steep = gain_per_km("Jones Street")
-    assert flat < 3.0, f"the Embarcadero should be level, got {flat:.1f} m/km"
-    assert steep > 20.0, f"Jones Street should be steep, got {steep:.1f} m/km"
-    assert steep > 8 * flat
+    # old railway grades against the steepest sustained street in the city
+    beltline = mean_grade(["Atlanta Beltline Eastside Trail", "Atlanta Beltline Westside Trail"])
+    creek = mean_grade(["Proctor Creek Greenway"])
+    steep = mean_grade(["Mary George Avenue Northwest"])
+    assert beltline < 0.02, f"the BeltLine is a railway grade, got {beltline:.1%}"
+    assert creek < 0.015, f"the Proctor Creek Greenway should be level, got {creek:.1%}"
+    assert steep > 0.05, f"Mary George Avenue should be steep, got {steep:.1%}"
+    assert steep > 3 * beltline
 
 
-def test_filbert_street_matches_its_documented_gradient(edges):
-    sub = edges[(edges["name"] == "Filbert Street")
-                & (edges["cls"] == "residential")
-                & (edges["length_m"] >= MIN_RELIABLE_GRADE_LENGTH_M)]
-    assert abs(sub["max_abs_grade"].max() - 0.315) < 0.05
+def test_a_street_under_a_freeway_bridge_has_no_phantom_hump(edges):
+    """Windsor Street passes under I-20 on the level. Before crossings were
+    bridged (network.find_dem_gaps) the bare-earth surface under the deck,
+    interpolated from the embankments, gave each block 11 m of climbing."""
+    sub = edges[(edges["name"] == "Windsor Street Southwest") & (edges["cls"] == "tertiary")]
+    c = sub.geometry.centroid
+    near = sub[(c.y - 3736943).abs().lt(30).to_numpy()]       # the two carriageways at I-20
+    assert len(near) == 2
+    assert near["cum_gain_fwd"].max() < 2.0, near[["length_m", "cum_gain_fwd"]]
+    assert near["max_abs_grade"].max() < 0.05
+
+
+def test_bridge_approaches_do_not_fall_off_a_ledge(edges):
+    """No drivable arterial block touching a flagged bridge keeps the 30%+
+    drop that Northside Drive, Lakewood Avenue and Ivan Allen Jr Boulevard
+    showed where the mapped bridge end sits out over the cut."""
+    nodes = set(edges.loc[edges["is_structure"], "u"]) | set(edges.loc[edges["is_structure"], "v"])
+    appr = edges[~edges["is_structure"] & (edges["u"].isin(nodes) | edges["v"].isin(nodes))
+                 & edges["cls"].isin(["trunk", "primary", "secondary", "tertiary"])
+                 & (edges["length_m"] >= MIN_RELIABLE_GRADE_LENGTH_M)]
+    assert len(appr) > 300
+    assert (appr["max_abs_grade"] >= 0.30).mean() < 0.005
 
 
 @pytest.mark.skipif(not PAIRS.exists(), reason="pair analysis not run")

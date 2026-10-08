@@ -13,7 +13,7 @@ baseline DEM mosaic is reused by symlink because it does not depend on any of
 the parameters.  Runs are cached: a configuration whose summary already
 exists is not rebuilt.
 
-    python -m sf_flat_routes sensitivity            # ~30 min on 4 cores
+    python -m sf_flat_routes sensitivity            # ~30 min
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import ANALYSIS, DATA_DIR, ELEVATION, OUTPUT_DIR, PROJECT_ROOT
+from .config import ANALYSIS, CITY_SLUG, DATA_DIR, ELEVATION, OUTPUT_DIR, PROJECT_ROOT
 from .utils import get_logger, step
 
 log = get_logger("sf_flat_routes.sensitivity")
@@ -60,8 +60,18 @@ GRID = [
     ("point_rank_2", {"point_rank": 2}, "third-nearest access intersection"),
 ]
 
-_STEEP = ["Filbert Street", "Jones Street", "22nd Street", "Bradford Street"]
-_FLAT = ["The Embarcadero", "Valencia Street", "Market Street"]
+#: Reference streets whose readings are tracked across configurations. The
+#: steep ones are the model's own steepest sustained blocks (Atlanta has no
+#: published gradients), so they show how far a reading moves, not whether
+#: it is right.
+_STEEP = ["Mattison Cove Northeast", "Abner Place Northwest",
+          "Lynn Drive Southwest", "Mary George Avenue Northwest"]
+_FLAT = ["Atlanta Beltline Eastside Trail", "DeKalb Avenue Northeast",
+         "Peachtree Street Northeast"]
+_SHORT = {"Mattison Cove Northeast": "Mattison Cove", "Abner Place Northwest": "Abner Pl",
+          "Lynn Drive Southwest": "Lynn Dr", "Mary George Avenue Northwest": "Mary George Ave",
+          "Atlanta Beltline Eastside Trail": "Eastside Trail",
+          "DeKalb Avenue Northeast": "DeKalb Ave", "Peachtree Street Northeast": "Peachtree St"}
 _DRIVABLE = ("residential", "tertiary", "secondary", "primary", "unclassified",
              "living_street")
 
@@ -128,12 +138,16 @@ def summarize_current_run(tag: str) -> Path:
     out["n_passes"] = int(len(passes))
 
     val = run_validation(ctx, cor, write=False)
-    wig = val["flat"][val["flat"]["corridor"].str.contains("Wiggle")]
-    if len(wig):
-        w = wig.iloc[0]
-        out["wiggle_excess_flat_m"] = float(w["excess_gain_m"])
-        out["wiggle_excess_shortest_m"] = float(w["shortest_excess_gain_m"])
-        out["wiggle_discovered"] = bool(w["discovered"])
+    from .validate import SIGNATURE
+    sig = val["flat"][val["flat"]["corridor"] == SIGNATURE["key"]]
+    if len(sig):
+        w = sig.iloc[0]
+        out["signature_excess_flat_m"] = float(w["excess_gain_m"])
+        out["signature_excess_shortest_m"] = float(w["shortest_excess_gain_m"])
+        out["signature_discovered"] = bool(w["discovered"])
+    share = (val.get("signature") or {}).get("min_climb", {}).get("corridor_share")
+    if share is not None:
+        out["signature_share"] = float(share)
     dem = val["dem"]
     if len(dem):
         out["dem_rms_m"] = float(np.sqrt((dem["diff"] ** 2).mean()))
@@ -157,8 +171,8 @@ def _run(tag: str, overrides: dict, force: bool = False) -> dict:
     (run_dir / "processed").mkdir(parents=True, exist_ok=True)
     (run_dir / "outputs").mkdir(parents=True, exist_ok=True)
     # the mosaic is parameter-independent and 20 s to rebuild: share it
-    base_mosaic = DATA_DIR / "processed" / "dem_sf_1m.tif"
-    link = run_dir / "processed" / "dem_sf_1m.tif"
+    base_mosaic = DATA_DIR / "processed" / f"dem_{CITY_SLUG}_1m.tif"
+    link = run_dir / "processed" / f"dem_{CITY_SLUG}_1m.tif"
     if base_mosaic.exists() and not link.exists():
         link.symlink_to(base_mosaic)
 
@@ -258,11 +272,12 @@ def _write(df: pd.DataFrame) -> None:
 
     L = ["# Sensitivity analysis", "",
          "Every configuration below rebuilds the full pipeline -- elevation "
-         "sampling, metrics, 10,080 routes, corridors and passes -- with one "
+         "sampling, metrics, every neighborhood-pair route, corridors and "
+         "passes -- with one "
          "parameter changed from the baseline. The question is whether the "
          "findings survive the modelling choices.", "",
          "Baseline: " + ", ".join(f"{k} = {v:g}" for k, v in BASELINE.items()), "",
-         "## The headline (walking, all 1,260 ordered pairs)", "",
+         "## The headline (walking, all ordered neighborhood pairs)", "",
          "| Configuration | Change | Flattest: extra distance | Flattest: "
          "climbing avoided | Shortest: mean climb | Flattest: mean climb | "
          "Grade-averse: mean steepest |",
@@ -275,21 +290,28 @@ def _write(df: pd.DataFrame) -> None:
                  f"{r['min_climb_gain_ft']:.0f} ft | "
                  f"{r['grade_averse_max_grade_pct']:.1f}% |")
 
-    L += ["", "## Elevation model checks", "",
-          "| Configuration | Filbert St | Jones St | 22nd St | Bradford St | "
-          "Embarcadero climb/km | Valencia climb/km | Network climb/km | "
-          "DEM RMS vs 1/3\" |", "|---|---|---|---|---|---|---|---|---|"]
-    for tag, r in df.iterrows():
-        L.append(f"| {tag} | {r['grade_Filbert Street']:.1f}% | "
-                 f"{r['grade_Jones Street']:.1f}% | {r['grade_22nd Street']:.1f}% | "
-                 f"{r['grade_Bradford Street']:.1f}% | "
-                 f"{r['gainkm_The Embarcadero']:.1f} m | "
-                 f"{r['gainkm_Valencia Street']:.1f} m | "
-                 f"{r['network_gain_per_km']:.1f} m | "
-                 f"{r.get('dem_rms_m', float('nan')):.2f} m |")
-    L += ["", "Published: Filbert 31.5%, Jones 29%, 22nd 31.5%, Bradford 41%.", ""]
+    def _num(r, key, fmt):
+        v = r.get(key, float("nan"))
+        return fmt.format(v) if pd.notna(v) else "n/a"
 
-    L += ["## Corridors, passes and the Wiggle", "",
+    L += ["", "## Elevation model checks", "",
+          "| Configuration | " + " | ".join(_SHORT.get(n, n) for n in _STEEP)
+          + " | " + " | ".join(f"{_SHORT.get(n, n)} climb/km" for n in _FLAT[:2])
+          + " | Network climb/km | DEM RMS vs 1/3\" |",
+          "|" + "---|" * (len(_STEEP) + 5)]
+    for tag, r in df.iterrows():
+        L.append(f"| {tag} | "
+                 + " | ".join(_num(r, f"grade_{n}", "{:.1f}%") for n in _STEEP) + " | "
+                 + " | ".join(_num(r, f"gainkm_{n}", "{:.1f} m") for n in _FLAT[:2])
+                 + f" | {r['network_gain_per_km']:.1f} m | "
+                 f"{r.get('dem_rms_m', float('nan')):.2f} m |")
+    L += ["", "The steep streets are the model's own steepest sustained "
+          "blocks, and the figure is the steepest pitch on the street: "
+          "there are no published gradients for Atlanta to hold them to, so "
+          "these columns show how far a reading moves, not whether it is "
+          "right.", ""]
+
+    L += ["## Corridors, passes and the BeltLine", "",
           "Corridor overlap is measured on the street itself: the "
           "length-weighted share of corridor-material edges the run has in "
           "common with the baseline. Comparing corridor names would be "
@@ -297,7 +319,7 @@ def _write(df: pd.DataFrame) -> None:
           "corridor without changing where it runs.", "",
           "| Configuration | Corridors found | Corridor edges shared with "
           "baseline | Lead streets of the top 12 kept | Streets that enter the "
-          "top 12 | Top corridor | Top pass | Wiggle excess climb (flat / shortest) |",
+          "top 12 | Top corridor | Top pass | BeltLine trip: excess climb (flat / shortest) |",
           "|---|---|---|---|---|---|---|---|"]
     for tag, r in df.iterrows():
         top = r["top_corridor"].split(" - ")[0]
@@ -308,8 +330,8 @@ def _write(df: pd.DataFrame) -> None:
                  f"{top} ({r['top_corridor_km']:.1f} km) | "
                  f"{r.get('top_pass_nbhd','')} {r.get('top_pass_ft', float('nan')):.0f} ft, "
                  f"{int(r.get('top_pass_pairs', 0))} pairs | "
-                 f"{r.get('wiggle_excess_flat_m', float('nan')):.1f} m / "
-                 f"{r.get('wiggle_excess_shortest_m', float('nan')):.1f} m |")
+                 f"{r.get('signature_excess_flat_m', float('nan')):.1f} m / "
+                 f"{r.get('signature_excess_shortest_m', float('nan')):.1f} m |")
 
     if base is not None and len(df) > 1:
         others = df.drop(index="baseline")
@@ -331,20 +353,21 @@ def _write(df: pd.DataFrame) -> None:
               f"{int(others['lead_streets_shared'].min())}-"
               f"{int(others['lead_streets_shared'].max())} of the baseline's "
               f"12 lead streets keep their place. What moves is the exact "
-              f"extent and composite name of each corridor, most under the "
-              f"profile smoothing window "
-              f"(**{others['edge_overlap_pct'].idxmin()}**, "
+              f"extent and composite name of each corridor, most under "
+              f"**{others['edge_overlap_pct'].idxmin()}** "
+              f"({why.get(others['edge_overlap_pct'].idxmin(), '')}, "
               f"{others['edge_overlap_pct'].min():.0f}%), and a few "
               f"borderline streets drift in and out at the margin: "
               f"{', '.join(sorted({s for v in others['lead_streets_new'] for s in v.split('; ') if s}))}."]
         L += [f"- The dominant pass is in {base.get('top_pass_nbhd','')} in "
               f"{int((df['top_pass_nbhd'] == base.get('top_pass_nbhd')).sum())} of "
               f"{len(df)} configurations.",
-              f"- The Wiggle is discovered as a corridor in "
-              f"{int(df['wiggle_discovered'].fillna(False).sum())} of {len(df)} "
+              f"- The BeltLine trip (Glenwood Avenue to Piedmont Park by "
+              f"bicycle) lands on a discovered corridor in "
+              f"{int(df['signature_discovered'].fillna(False).sum())} of {len(df)} "
               f"configurations, and its flat route always wastes less climbing "
               f"than the shortest one: worst case "
-              f"{df['wiggle_excess_flat_m'].max():.1f} m against "
-              f"{df['wiggle_excess_shortest_m'].min():.1f} m.", ""]
+              f"{df['signature_excess_flat_m'].max():.1f} m against "
+              f"{df['signature_excess_shortest_m'].min():.1f} m.", ""]
     SENS_MD.write_text("\n".join(L))
     log.info("wrote %s and %s", SENS_CSV.name, SENS_MD.name)

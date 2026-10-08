@@ -1,64 +1,64 @@
 # Sensitivity analysis
 
-Every configuration below rebuilds the full pipeline -- elevation sampling, metrics, 10,080 routes, corridors and passes -- with one parameter changed from the baseline. The question is whether the findings survive the modelling choices.
+Every configuration below rebuilds the full pipeline -- elevation sampling, metrics, every neighborhood-pair route, corridors and passes -- with one parameter changed from the baseline. The question is whether the findings survive the modelling choices.
 
 Baseline: sample_spacing_m = 5, smooth_window_m = 25, gain_deadband_m = 0.5, dem_sigma_m = 3, point_rank = 0
 
-## The headline (walking, all 1,260 ordered pairs)
+## The headline (walking, all ordered neighborhood pairs)
 
 | Configuration | Change | Flattest: extra distance | Flattest: climbing avoided | Shortest: mean climb | Flattest: mean climb | Grade-averse: mean steepest |
 |---|---|---|---|---|---|---|
-| baseline | the configuration used for every published figure | +14% | 39% | 484 ft | 281 ft | 10.8% |
-| spacing_2.5m | denser DEM sampling | +14% | 40% | 484 ft | 281 ft | 10.3% |
-| spacing_10m | coarser DEM sampling | +14% | 39% | 489 ft | 284 ft | 10.8% |
-| window_12.5m | half the profile smoothing | +15% | 39% | 486 ft | 283 ft | 10.2% |
-| window_50m | double the profile smoothing | +14% | 40% | 486 ft | 282 ft | 10.8% |
-| deadband_0.25m | half the dead-band | +14% | 39% | 484 ft | 282 ft | 10.8% |
-| deadband_1m | double the dead-band | +14% | 40% | 484 ft | 280 ft | 10.8% |
-| sigma_0m | no spatial pre-filter on the DEM | +14% | 40% | 485 ft | 281 ft | 11.3% |
-| sigma_6m | double the spatial pre-filter | +14% | 39% | 482 ft | 281 ft | 10.7% |
-| point_rank_1 | second-nearest access intersection | +14% | 40% | 484 ft | 277 ft | 10.6% |
-| point_rank_2 | third-nearest access intersection | +14% | 40% | 477 ft | 273 ft | 10.0% |
+| baseline | the configuration used for every published figure | +7% | 19% | 560 ft | 448 ft | 9.4% |
+| spacing_2.5m | denser DEM sampling | +7% | 19% | 561 ft | 449 ft | 8.8% |
+| spacing_10m | coarser DEM sampling | +7% | 19% | 561 ft | 449 ft | 9.8% |
+| window_12.5m | half the profile smoothing | +7% | 20% | 562 ft | 450 ft | 9.2% |
+| window_50m | double the profile smoothing | +7% | 19% | 558 ft | 446 ft | 10.0% |
+| deadband_0.25m | half the dead-band | +7% | 19% | 561 ft | 450 ft | 9.4% |
+| deadband_1m | double the dead-band | +7% | 20% | 559 ft | 447 ft | 9.4% |
+| sigma_0m | no spatial pre-filter on the DEM | +7% | 19% | 560 ft | 448 ft | 9.5% |
+| sigma_6m | double the spatial pre-filter | +7% | 19% | 563 ft | 452 ft | 9.2% |
+| point_rank_1 | second-nearest access intersection | +7% | 20% | 556 ft | 446 ft | 9.3% |
+| point_rank_2 | third-nearest access intersection | +7% | 20% | 552 ft | 441 ft | 8.8% |
 
 ## Elevation model checks
 
-| Configuration | Filbert St | Jones St | 22nd St | Bradford St | Embarcadero climb/km | Valencia climb/km | Network climb/km | DEM RMS vs 1/3" |
+| Configuration | Mattison Cove | Abner Pl | Lynn Dr | Mary George Ave | Eastside Trail climb/km | DeKalb Ave climb/km | Network climb/km | DEM RMS vs 1/3" |
 |---|---|---|---|---|---|---|---|---|
-| baseline | 32.9% | 31.1% | 32.6% | 33.1% | 1.1 m | 6.0 m | 21.3 m | 0.68 m |
-| spacing_2.5m | 33.1% | 31.4% | 32.4% | 32.3% | 1.1 m | 6.0 m | 21.3 m | 0.68 m |
-| spacing_10m | 32.2% | 30.0% | 32.3% | 33.3% | 1.0 m | 6.1 m | 21.4 m | 0.68 m |
-| window_12.5m | 31.7% | 29.5% | 31.7% | 36.7% | 1.1 m | 6.1 m | 21.5 m | 0.68 m |
-| window_50m | 33.3% | 33.1% | 33.9% | 29.4% | 1.1 m | 6.0 m | 21.2 m | 0.68 m |
-| deadband_0.25m | 32.9% | 31.1% | 32.6% | 33.1% | 1.3 m | 6.0 m | 21.3 m | 0.68 m |
-| deadband_1m | 32.9% | 31.1% | 32.6% | 33.1% | 1.1 m | 6.0 m | 21.2 m | 0.68 m |
-| sigma_0m | 33.3% | 31.6% | 32.9% | 32.4% | 1.0 m | 6.1 m | 21.5 m | 0.68 m |
-| sigma_6m | 32.4% | 30.7% | 31.9% | 34.5% | 0.9 m | 6.0 m | 21.2 m | 0.68 m |
-| point_rank_1 | 32.9% | 31.1% | 32.6% | 33.1% | 1.1 m | 6.0 m | 21.3 m | 0.68 m |
-| point_rank_2 | 32.9% | 31.1% | 32.6% | 33.1% | 1.1 m | 6.0 m | 21.3 m | 0.68 m |
+| baseline | 23.8% | 21.2% | 21.4% | 21.2% | 12.7 m | 9.1 m | 17.0 m | 0.51 m |
+| spacing_2.5m | 23.8% | 21.2% | 21.4% | 21.2% | 12.7 m | 9.1 m | 17.1 m | 0.51 m |
+| spacing_10m | 23.9% | 20.9% | 21.1% | 21.1% | 12.4 m | 9.1 m | 17.0 m | 0.51 m |
+| window_12.5m | 25.6% | 21.0% | 21.1% | 21.2% | 12.7 m | 9.1 m | 17.2 m | 0.51 m |
+| window_50m | 23.3% | 21.3% | 21.2% | 21.1% | 12.7 m | 9.1 m | 16.8 m | 0.51 m |
+| deadband_0.25m | 23.8% | 21.2% | 21.4% | 21.2% | 12.7 m | 9.1 m | 17.1 m | 0.51 m |
+| deadband_1m | 23.8% | 21.2% | 21.4% | 21.2% | 12.7 m | 9.1 m | 16.9 m | 0.51 m |
+| sigma_0m | 24.0% | 21.3% | 21.2% | 21.3% | 12.7 m | 9.2 m | 17.1 m | 0.51 m |
+| sigma_6m | 23.9% | 21.1% | 21.2% | 21.1% | 12.5 m | 8.9 m | 17.0 m | 0.51 m |
+| point_rank_1 | 23.8% | 21.2% | 21.4% | 21.2% | 12.7 m | 9.1 m | 17.0 m | 0.51 m |
+| point_rank_2 | 23.8% | 21.2% | 21.4% | 21.2% | 12.7 m | 9.1 m | 17.0 m | 0.51 m |
 
-Published: Filbert 31.5%, Jones 29%, 22nd 31.5%, Bradford 41%.
+The steep streets are the model's own steepest sustained blocks, and the figure is the steepest pitch on the street: there are no published gradients for Atlanta to hold them to, so these columns show how far a reading moves, not whether it is right.
 
-## Corridors, passes and the Wiggle
+## Corridors, passes and the BeltLine
 
 Corridor overlap is measured on the street itself: the length-weighted share of corridor-material edges the run has in common with the baseline. Comparing corridor names would be misleading, since a merge boundary moving by one block renames a corridor without changing where it runs.
 
-| Configuration | Corridors found | Corridor edges shared with baseline | Lead streets of the top 12 kept | Streets that enter the top 12 | Top corridor | Top pass | Wiggle excess climb (flat / shortest) |
+| Configuration | Corridors found | Corridor edges shared with baseline | Lead streets of the top 12 kept | Streets that enter the top 12 | Top corridor | Top pass | BeltLine trip: excess climb (flat / shortest) |
 |---|---|---|---|---|---|---|---|
-| baseline | 53 | 100% | 12/12 | &mdash; | Valencia Street (6.9 km) | Golden Gate Park 255 ft, 119 pairs | 5.9 m / 19.2 m |
-| spacing_2.5m | 52 | 90% | 11/12 | 24th Street | Valencia Street (7.4 km) | Golden Gate Park 255 ft, 119 pairs | 6.0 m / 19.2 m |
-| spacing_10m | 53 | 82% | 9/12 | California Street; Geary Boulevard; Hyde Street | Valencia Street (10.5 km) | Golden Gate Park 255 ft, 119 pairs | 6.0 m / 19.2 m |
-| window_12.5m | 53 | 78% | 11/12 | Market Street | Valencia Street (6.3 km) | Golden Gate Park 255 ft, 119 pairs | 5.6 m / 19.0 m |
-| window_50m | 52 | 71% | 9/12 | Market Street; Oak Street Cyclepath; Onondaga Avenue | Valencia Street (7.2 km) | Golden Gate Park 255 ft, 119 pairs | 5.8 m / 18.8 m |
-| deadband_0.25m | 52 | 98% | 11/12 | Greenwich Street | Valencia Street (6.9 km) | Golden Gate Park 255 ft, 119 pairs | 5.9 m / 19.2 m |
-| deadband_1m | 53 | 99% | 12/12 | &mdash; | Valencia Street (6.9 km) | Golden Gate Park 255 ft, 119 pairs | 5.9 m / 19.2 m |
-| sigma_0m | 52 | 81% | 9/12 | 23rd Street; 24th Street; Divisadero Street | Valencia Street (6.7 km) | Golden Gate Park 255 ft, 119 pairs | 6.0 m / 19.5 m |
-| sigma_6m | 58 | 80% | 8/12 | Alabama Street; Greenwich Street; Market Street; Steiner Street | Valencia Street (7.4 km) | Golden Gate Park 255 ft, 119 pairs | 5.1 m / 18.3 m |
-| point_rank_1 | 45 | 86% | 10/12 | Divisadero Street; Oakdale Avenue | Valencia Street (7.1 km) | Golden Gate Park 255 ft, 119 pairs | 5.9 m / 19.2 m |
-| point_rank_2 | 49 | 75% | 11/12 | Divisadero Street | Valencia Street (7.1 km) | Golden Gate Park 255 ft, 112 pairs | 5.9 m / 19.2 m |
+| baseline | 87 | 100% | 12/12 | &mdash; | Edgewood Avenue Northeast (4.8 km) | West End 1018 ft, 184 pairs | 37.1 m / 60.9 m |
+| spacing_2.5m | 86 | 95% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (4.4 km) | West End 1018 ft, 184 pairs | 37.3 m / 61.0 m |
+| spacing_10m | 82 | 92% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (4.8 km) | West End 1018 ft, 184 pairs | 36.3 m / 60.9 m |
+| window_12.5m | 85 | 89% | 12/12 | &mdash; | Edgewood Avenue Northeast (4.6 km) | West End 1018 ft, 184 pairs | 37.3 m / 60.9 m |
+| window_50m | 89 | 87% | 12/12 | &mdash; | Edgewood Avenue Northeast (4.4 km) | West End 1018 ft, 176 pairs | 37.1 m / 61.3 m |
+| deadband_0.25m | 85 | 99% | 12/12 | &mdash; | Edgewood Avenue Northeast (4.8 km) | West End 1018 ft, 184 pairs | 37.6 m / 60.9 m |
+| deadband_1m | 84 | 98% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (4.8 km) | West End 1018 ft, 184 pairs | 37.1 m / 60.9 m |
+| sigma_0m | 86 | 90% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (4.3 km) | West End 1018 ft, 184 pairs | 37.4 m / 60.9 m |
+| sigma_6m | 81 | 89% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (4.7 km) | Oakland City 1019 ft, 184 pairs | 37.2 m / 61.0 m |
+| point_rank_1 | 81 | 89% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (4.5 km) | West End 1018 ft, 161 pairs | 37.1 m / 60.9 m |
+| point_rank_2 | 82 | 85% | 11/12 | Peachtree Road | Edgewood Avenue Northeast (9.0 km) | West End 1018 ft, 207 pairs | 37.1 m / 60.9 m |
 
 ## Reading it
 
-- The headline trade (extra distance for climbing avoided on the flattest route) ranges from +14% / 39% to +15% / 40% across every perturbation, against +14% / 39% at baseline.
-- The corridor material stays 71-99% the same street, by length, under every perturbation, and 8-12 of the baseline's 12 lead streets keep their place. What moves is the exact extent and composite name of each corridor, most under the profile smoothing window (**window_50m**, 71%), and a few borderline streets drift in and out at the margin: 23rd Street, 24th Street, Alabama Street, California Street, Divisadero Street, Geary Boulevard, Greenwich Street, Hyde Street, Market Street, Oak Street Cyclepath, Oakdale Avenue, Onondaga Avenue, Steiner Street.
-- The dominant pass is in Golden Gate Park in 11 of 11 configurations.
-- The Wiggle is discovered as a corridor in 11 of 11 configurations, and its flat route always wastes less climbing than the shortest one: worst case 6.0 m against 18.3 m.
+- The headline trade (extra distance for climbing avoided on the flattest route) ranges from +7% / 19% to +7% / 20% across every perturbation, against +7% / 19% at baseline.
+- The corridor material stays 85-99% the same street, by length, under every perturbation, and 11-12 of the baseline's 12 lead streets keep their place. What moves is the exact extent and composite name of each corridor, most under **point_rank_2** (third-nearest access intersection, 85%), and a few borderline streets drift in and out at the margin: Peachtree Road.
+- The dominant pass is in West End in 10 of 11 configurations.
+- The BeltLine trip (Glenwood Avenue to Piedmont Park by bicycle) lands on a discovered corridor in 11 of 11 configurations, and its flat route always wastes less climbing than the shortest one: worst case 37.6 m against 60.9 m.

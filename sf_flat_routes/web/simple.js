@@ -1,4 +1,4 @@
-/* San Francisco flat routes -- the route page.
+/* Atlanta flat routes -- the route page.
  *
  * One card: where from, where to, and a slider from the shortest route to
  * the flattest. Everything runs in the page: the graph and the cost model
@@ -76,7 +76,10 @@
   const ABBREV = { street: "st", avenue: "ave", boulevard: "blvd", drive: "dr", road: "rd",
     court: "ct", place: "pl", lane: "ln", terrace: "ter", highway: "hwy", parkway: "pkwy",
     circle: "cir", alley: "aly", square: "sq", stairway: "stwy", stairs: "stwy", way: "wy",
-    north: "n", south: "s", east: "e", west: "w", saint: "st", mount: "mt" };
+    north: "n", south: "s", east: "e", west: "w", saint: "st", mount: "mt",
+    /* Atlanta's quadrants: "10th St NE" and "10th Street Northeast" are one street */
+    northeast: "ne", northwest: "nw", southeast: "se", southwest: "sw",
+    trail: "trl", junior: "jr", point: "pt", extension: "ext" };
   const norm = (s) => s.toLowerCase()
     .replace(/[’']/g, "")
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
@@ -123,7 +126,7 @@
       }
     }
 
-    /* "24th St & Mission St": a node with two or more distinct street names */
+    /* "10th St NE & Peachtree St NE": a node with two or more distinct street names */
     buildIntersections() {
       const g = this.graph, geom = this.geom;
       const per = new Array(g.n);
@@ -175,7 +178,7 @@
       const qq = q.replace(/ /g, "");
       const out = [];
 
-      // "1234 Valencia" -- a street address
+      // "675 Ponce de Leon" -- a street address
       const am = /^(\d+)\s+(\D.*)$/.exec(q);
       if (am && this.addr) {
         const want = +am[1], sq = am[2], stoks = sq.split(" ");
@@ -184,23 +187,31 @@
           const sc = matchScore(this.addr.nn[i], sq, stoks);
           if (sc >= 0 && sc <= 2) hits.push([sc, i]);
         }
-        hits.sort((a, b) => a[0] - b[0] || this.addr.streets[a[1]].length - this.addr.streets[b[1]].length);
-        for (const [sc, si] of hits.slice(0, 4)) {
-          const a = this.addr, lo = a.start[si], hi = a.start[si + 1];
+        // Atlanta repeats a name across street types and quadrants (Ponce de
+        // Leon Avenue NE, Place NE, Court NE, Manor...), so rank the streets
+        // that actually have the number first, then the ones with the most
+        // addresses: the avenue before the cul-de-sac that borrowed its name
+        const a = this.addr;
+        for (const h of hits) {
+          const si = h[1], lo = a.start[si], hi = a.start[si + 1];
           // numbers are sorted within a street: binary search for the nearest
-          let l = lo, h = hi - 1;
-          while (l < h) { const m = (l + h) >> 1; if (a.number[m] < want) l = m + 1; else h = m; }
+          let l = lo, r = hi - 1;
+          while (l < r) { const m = (l + r) >> 1; if (a.number[m] < want) l = m + 1; else r = m; }
           let best = l;
           if (l > lo && Math.abs(a.number[l - 1] - want) < Math.abs(a.number[l] - want)) best = l - 1;
+          h.push(best, a.number[best] === want ? 0 : 1, hi - lo);
+        }
+        hits.sort((x, y) => x[0] - y[0] || x[3] - y[3] || y[4] - x[4]);
+        for (const [sc, si, best, miss] of hits.slice(0, 4)) {
           const num = a.number[best];
-          const exact = num === want;
+          const exact = !miss;
           out.push({ score: exact ? -1 : sc, name: num + " " + a.streets[si],
             kind: exact ? "address" : "nearest address", rank: 0,
             lon: a.origin[0] + a.lon[best] * a.step, lat: a.origin[1] + a.lat[best] * a.step });
         }
       }
 
-      // "24th & mission" -- an intersection
+      // "10th & peachtree" -- an intersection
       const parts = raw.toLowerCase().split(/\s+(?:and|at)\s+|\s*[&\/@+]\s*/).map(norm).filter(Boolean);
       if (parts.length === 2) {
         for (const it of this.intersections) {
@@ -330,7 +341,7 @@
     buildMap() {
       const map = L.map("map", {
         zoomControl: false, attributionControl: true, preferCanvas: true,
-        center: [37.765, -122.44], zoom: 12, minZoom: 11, maxZoom: 18, zoomSnap: 0.25, zoomAnimationThreshold: 8,
+        center: [33.765, -84.42], zoom: 11.5, minZoom: 10.5, maxZoom: 18, zoomSnap: 0.25, zoomAnimationThreshold: 8,
       });
       map.attributionControl.setPrefix("");
       map.attributionControl.addAttribution(
@@ -1281,9 +1292,12 @@
 
   /* ------------------------------------------------------------- helpers */
   const STREET_SHORT = { Street: "St", Avenue: "Ave", Boulevard: "Blvd", Drive: "Dr", Road: "Rd",
-    Terrace: "Ter", Place: "Pl", Court: "Ct", Lane: "Ln", Highway: "Hwy", Parkway: "Pkwy" };
+    Terrace: "Ter", Place: "Pl", Court: "Ct", Lane: "Ln", Highway: "Hwy", Parkway: "Pkwy",
+    Northeast: "NE", Northwest: "NW", Southeast: "SE", Southwest: "SW" };
+  /* a quadrant only as the last word: "Northwest Drive Northwest" keeps its name */
   function shortStreet(name) {
-    return String(name).split(" ").map((w) => STREET_SHORT[w] || w).join(" ");
+    const w = String(name).split(" ");
+    return w.map((x, i) => (/^(North|South)(east|west)$/.test(x) && i < w.length - 1) ? x : (STREET_SHORT[x] || x)).join(" ");
   }
 
   /* Keep at most k members, spread evenly along the frontier's length in

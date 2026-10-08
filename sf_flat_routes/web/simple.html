@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Flatten SF</title>
-<meta name="description" content="flattensf: the flattest walking or cycling route between any two places in San Francisco, and every route between it and the shortest one.">
+<title>Flatten ATL</title>
+<meta name="description" content="flattenatl: the flattest walking or cycling route between any two places in Atlanta, and every route between it and the shortest one.">
 <!--__HEAD_EXTRA__-->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,13 +14,13 @@
 </head>
 <body>
 <div id="map"></div>
-<div class="credit" id="credit">by <a href="https://almostimplemented.com" rel="author">Drew Edwards</a></div>
-<section id="card" aria-label="flattensf: plan a flat route">
-  <h1>Flatten SF <small>flat routes across San Francisco</small></h1>
+<div class="credit" id="credit">a port of <a href="https://flattensf.com">Flatten SF</a> by <a href="https://almostimplemented.com" rel="author">Drew Edwards</a></div>
+<section id="card" aria-label="flattenatl: plan a flat route">
+  <h1>Flatten ATL <small>flat routes across Atlanta</small></h1>
   <div class="row">
     <div class="field">
       <label for="from">From</label>
-      <input id="from" type="text" autocomplete="off" spellcheck="false" placeholder="Address, place, or 24th & Mission">
+      <input id="from" type="text" autocomplete="off" spellcheck="false" placeholder="Address, place, or 10th & Peachtree">
       <span class="pin" aria-hidden="true"></span>
       <ul class="suggest" id="from_s" role="listbox" hidden></ul>
     </div>
@@ -69,7 +69,7 @@
   <div class="turns" id="turns" hidden></div>
   <details>
     <summary>How this works</summary>
-    <p class="fine">Routes are computed in your browser over 160,000 street
+    <p class="fine">Routes are computed in your browser over /*__N_ARCS__*/ street
     segments, with USGS 1&nbsp;m lidar elevation on the Overture /
     OpenStreetMap street graph. The slider runs the whole trade-off between
     distance and climbing: every route nothing else beats on both, from
@@ -83,13 +83,13 @@
     <i>allow out and back</i> to include the same streets there and back,
     which is often flatter still. On a
     bike, <i>prefer calm streets</i> counts protected lanes and paths
-    (SFMTA bikeway network) as shorter than they are and busy arterials as
+    (Atlanta Regional Commission inventory) as shorter than they are and busy arterials as
     longer.</p>
     <p class="fine">Place search is offline: the city's intersections,
-    places and addresses are built into this page.
+    places and addresses are built into this page. Routes stay inside the Atlanta city limits.
     <a href="/*__REPO_URL__*/">Source, data and the full analysis</a>.</p>
   </details>
-  <p class="credit-inline">by <a href="https://almostimplemented.com" rel="author">Drew Edwards</a></p>
+  <p class="credit-inline">a port of <a href="https://flattensf.com">Flatten SF</a> by <a href="https://almostimplemented.com" rel="author">Drew Edwards</a></p>
 </section>
 <script>/*__LEAFLET_JS__*/</script>
 <script>window.DATA = /*__DATA__*/;</script>

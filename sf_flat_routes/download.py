@@ -2,14 +2,14 @@
 
 Everything is cached under ``data/raw`` and re-downloaded only when missing
 (or when ``force=True``), so re-running the pipeline never re-fetches the
-523 MB of lidar or re-scans the Overture release.
+3.6 GB of lidar or re-scans the Overture release.
 
 The Overture read is the interesting part: the transportation theme is ~64 GB
 spread over 128 Parquet files.  Each file carries per-row-group statistics on
 the ``bbox`` struct column, and Overture writes rows in spatial order, so we
 read the 128 footers (cheap, a couple of range requests each), keep only the
-row groups whose bounding box intersects San Francisco, and read just those.
-In practice 7 row groups in a single file cover the city.
+row groups whose bounding box intersects the study area, and read just those.
+In practice a handful of row groups cover the city.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import numpy as np
 import requests
 
 from . import sources
-from .config import RAW_DIR, SF_BBOX
+from .config import CITY_BBOX, CITY_SLUG, RAW_DIR
 from .utils import configure_gdal_for_proxy, get_logger, human_bytes, progress, step
 
 log = get_logger("sf_flat_routes.download")
@@ -29,21 +29,24 @@ log = get_logger("sf_flat_routes.download")
 _S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
 DEM_DIR = RAW_DIR / "dem"
-SEGMENTS_PARQUET = RAW_DIR / "overture_segments_sf.parquet"
-CONNECTORS_PARQUET = RAW_DIR / "overture_connectors_sf.parquet"
-PLACES_PARQUET = RAW_DIR / "overture_places_sf.parquet"
-ADDRESSES_PARQUET = RAW_DIR / "overture_addresses_sf.parquet"
+SEGMENTS_PARQUET = RAW_DIR / f"overture_segments_{CITY_SLUG}.parquet"
+CONNECTORS_PARQUET = RAW_DIR / f"overture_connectors_{CITY_SLUG}.parquet"
+PLACES_PARQUET = RAW_DIR / f"overture_places_{CITY_SLUG}.parquet"
+ADDRESSES_PARQUET = RAW_DIR / f"overture_addresses_{CITY_SLUG}.parquet"
 #: Overture base theme (OpenStreetMap): mapped parks, schools, stations...
-BASE_PARQUETS = {typ: RAW_DIR / f"overture_{typ}_sf.parquet"
+BASE_PARQUETS = {typ: RAW_DIR / f"overture_{typ}_{CITY_SLUG}.parquet"
                  for typ in ("land_use", "infrastructure", "land")}
-NEIGHBORHOODS_GEOJSON = RAW_DIR / "sf_neighborhoods.geojson"
-DEM_13_TIF = RAW_DIR / "dem_13_n38w123.tif"
+NEIGHBORHOODS_GEOJSON = RAW_DIR / f"{CITY_SLUG}_neighborhoods.geojson"
+CITY_LIMITS_GEOJSON = RAW_DIR / f"{CITY_SLUG}_city_limits.geojson"
+#: Regional bike facility inventory; small, public and fetched like the rest.
+BIKEWAYS_GEOJSON = RAW_DIR / "arc_bike_facilities.geojson"
+DEM_13_TIF = RAW_DIR / "dem_13_n34w085.tif"
 
 #: Columns pulled from the Overture segment table. Everything unused is left
 #: on the server -- the nested route/destination columns are large.
 SEGMENT_COLUMNS = [
     "id", "names", "subtype", "class", "subclass", "connectors",
-    "road_flags", "access_restrictions", "road_surface", "speed_limits",
+    "road_flags", "rail_flags", "access_restrictions", "road_surface", "speed_limits",
     "level_rules", "geometry", "bbox", "sources",
 ]
 CONNECTOR_COLUMNS = ["id", "geometry", "bbox"]
@@ -142,7 +145,7 @@ def _matching_row_groups(metadata, bbox) -> list[int]:
 
 
 def _read_overture_type(overture_type: str, columns: list[str], dest: Path,
-                        bbox=SF_BBOX, force: bool = False,
+                        bbox=CITY_BBOX, force: bool = False,
                         prefix: str = sources.OVERTURE_PREFIX) -> Path:
     """Row-group-pruned read of one Overture type (any theme)."""
     import fsspec
@@ -165,12 +168,12 @@ def _read_overture_type(overture_type: str, columns: list[str], dest: Path,
             md = pq.ParquetFile(fh).metadata
             return key, _matching_row_groups(md, bbox)
 
-    with step(f"scanning {len(keys)} {overture_type} footers for the SF bbox", log):
+    with step(f"scanning {len(keys)} {overture_type} footers for the study bbox", log):
         with ThreadPoolExecutor(max_workers=16) as pool:
             scanned = list(pool.map(scan, keys))
     hits = [(k, rgs) for k, rgs in scanned if rgs]
     n_rg = sum(len(r) for _, r in hits)
-    log.info("overture %s: %d row group(s) in %d file(s) intersect SF",
+    log.info("overture %s: %d row group(s) in %d file(s) intersect the bbox",
              overture_type, n_rg, len(hits))
     if not hits:
         raise RuntimeError(f"no Overture {overture_type} row groups intersect {bbox}")
@@ -229,7 +232,7 @@ def download_places(force: bool = False) -> tuple[Path, Path]:
 # Elevation
 # --------------------------------------------------------------------------
 def download_dem(force: bool = False, include_seamless: bool = True) -> list[Path]:
-    """Fetch the four 1 m 3DEP tiles that cover San Francisco."""
+    """Fetch the 1 m 3DEP tiles that cover the city."""
     paths = []
     for tile in sources.LIDAR_TILES:
         url = f"{sources.TNM_BUCKET}/{sources.LIDAR_PREFIX}/{tile}"
@@ -246,7 +249,12 @@ def download_dem(force: bool = False, include_seamless: bool = True) -> list[Pat
 # Neighborhoods
 # --------------------------------------------------------------------------
 def download_neighborhoods(force: bool = False) -> Path:
+    _download_file(sources.CITY_LIMITS_URL, CITY_LIMITS_GEOJSON, force=force)
     return _download_file(sources.NEIGHBORHOOD_URL, NEIGHBORHOODS_GEOJSON, force=force)
+
+
+def download_bikeways(force: bool = False) -> Path:
+    return _download_file(sources.BIKEWAYS_URL, BIKEWAYS_GEOJSON, force=force)
 
 
 # --------------------------------------------------------------------------
@@ -257,8 +265,14 @@ def download_all(force: bool = False) -> dict[str, object]:
     out: dict[str, object] = {}
     with step("downloading street network (Overture)", log):
         out["segments"], out["connectors"] = download_street_network(force=force)
-    with step("downloading neighborhood boundaries", log):
+    with step("downloading city limits and neighborhood boundaries", log):
         out["neighborhoods"] = download_neighborhoods(force=force)
+    with step("downloading bike facilities", log):
+        try:
+            out["bikeways"] = download_bikeways(force=force)
+        except Exception as exc:  # optional: bike mode falls back to road class
+            log.warning("bike facility inventory unavailable (%s); bike "
+                        "comfort will use road class only", exc)
     with step("downloading places and addresses (Overture)", log):
         try:
             out["places"], out["addresses"] = download_places(force=force)

@@ -1,6 +1,6 @@
 """End-to-end test of the route page (the shareable map).
 
-Drives ``outputs/sf_flat_route_finder.html`` in a headless browser: the page
+Drives ``outputs/atl_flat_route_finder.html`` in a headless browser: the page
 must load without errors, route its default trip, answer searches for an
 intersection, an address and a park, and produce a route family whose ends
 are what the slider labels promise -- the left end is the true shortest
@@ -41,10 +41,10 @@ pytestmark = [
                        reason="processed data not built"),
 ]
 
-_SEARCHES = ["24th & mission", "1234 valencia", "golden gate park", "ferry building",
-             "church st and 24th st", "coit tower", "ocean beach", "caltrain",
-             "geary blvd & 25th ave", "25th avenue and geary boulevard", "cabrillo st & 38th ave",
-             "geary blvd"]
+_SEARCHES = ["10th & peachtree", "675 ponce de leon", "piedmont park", "ponce city market",
+             "boulevard and north ave", "five points", "grant park", "arts center",
+             "peachtree st ne & 10th st ne", "10th street northeast and peachtree street northeast",
+             "moreland ave & euclid ave", "ponce de leon ave"]
 
 _SCRIPT = """(queries) => {
     const fam = App.family, g = App.graph;
@@ -70,7 +70,7 @@ _SCRIPT = """(queries) => {
         hasAddresses: !!App.index.addr,
         frontier: { solutions: App._search.solutions.length, labels: App._search.labels,
                     expanded: App._search.expanded, truncated: App._search.truncated },
-        snap: (() => { const p = App.pointAt(-122.58, 37.76); const g = App.graph;
+        snap: (() => { const p = App.pointAt(-84.25, 33.775); const g = App.graph;
             return p ? { node: p.node, pinLon: p.lon, pinLat: p.lat,
                          nodeLon: g.nodeLon(p.node), nodeLat: g.nodeLat(p.node) } : { node: -1 }; })(),
     };
@@ -101,7 +101,7 @@ def page_results():
         # change the destination without touching the slider: the line on
         # the map must be the new trip's, not the old one's
         page.evaluate("""() => {
-            const hit = App.index.search('coit tower')[0];
+            const hit = App.index.search('piedmont park')[0];
             window._hit = hit;
             App.setPoint('to', App.pointAt(hit.lon, hit.lat, hit.name), false);
             App.recompute('auto');
@@ -113,15 +113,16 @@ def page_results():
             const end = line[line.length - 1];
             return { before, after: line.length, sameAsShown: line.length === u.latlngs.length,
                      member: App.family.unique.includes(u),
-                     endsAtCoit: Math.abs(end.lat - hit.lat) < 0.004 && Math.abs(end.lng - hit.lon) < 0.004 };
+                     endsAtTarget: Math.abs(end.lat - hit.lat) < 0.004 && Math.abs(end.lng - hit.lon) < 0.004 };
         }""")
-        # bike mode, Divisadero & Hayes to Marina Green: with calm streets on
-        # the ride goes up Scott (no bikeway, but quiet); off, straight up
-        # Divisadero, the shortest line and a busy arterial
+        # bike mode, Boulevard at Memorial Drive to Boulevard at Ponce de
+        # Leon: with calm streets on the ride goes up Parkway Drive and
+        # Jackson Street (no bikeway, but quiet); off, straight up
+        # Boulevard, the shortest line and a busy arterial
         page.evaluate("""() => {
             document.querySelector('#mode button[data-v=bike]').click();
-            App.setPoint('from', App.pointAt(-122.4375, 37.7747, 'Divisadero & Hayes'), false);
-            App.setPoint('to', App.pointAt(-122.4435, 37.8060, 'Marina Green'), false);
+            App.setPoint('from', App.pointAt(-84.3684, 33.7465, 'Boulevard & Memorial'), false);
+            App.setPoint('to', App.pointAt(-84.3718, 33.7738, 'Boulevard & Ponce'), false);
             App.recompute('auto');
         }""")
         page.wait_for_function("App.family && !App.family.partial", timeout=120_000)
@@ -144,7 +145,7 @@ def page_results():
         out["calm_off"] = page.evaluate(streets)
         # loop mode: the engine's loops, then the toggle, then a shared link
         out["loops"] = page.evaluate("""() => {
-            const g = App.graph, src = App.nearestNode(-122.42713, 37.75972);
+            const g = App.graph, src = App.nearestNode(-84.37189, 33.78905);   // Piedmont Park
             const s = g.loops(src, 'walk', { targetM: 5 * 1609.344 });
             while (!s.step(1e9)) {}
             const tail = g.reverse().tail;
@@ -154,15 +155,15 @@ def page_results():
                 connected: r.arcs.every((a, i) => i === 0 || tail[a] === g.head[r.arcs[i - 1]]) })) };
         }""")
         out["outback"] = page.evaluate("""() => {
-            const g = App.graph, src = App.nearestNode(-122.4435, 37.8060);   // Marina Green
+            const g = App.graph, src = App.nearestNode(-84.36405, 33.75652);   // Krog Street Market
             const run = (opts) => { const s = g.loops(src, 'walk', Object.assign({ targetM: 4 * 1609.344 }, opts));
               while (!s.step(1e9)) {} return s.loops.map(r => ({ gain: r.gain, kind: r.kind, overlap: r.overlap, length: r.length })); };
             return { loops: run({}), ob: run({ outBack: true }) };
         }""")
         page.evaluate("""() => {
             document.querySelector('#mode button[data-v=walk]').click();
-            App.setPoint('from', App.pointAt(-122.4113, 37.7604, 'Trick Dog'), false);
-            App.setPoint('to', App.pointAt(-122.4435, 37.8060, 'Marina Green'), false);
+            App.setPoint('from', App.pointAt(-84.39881, 33.77609, 'Georgia Tech'), false);
+            App.setPoint('to', App.pointAt(-84.36405, 33.75652, 'Krog Street Market'), false);
             App.recompute('auto');
         }""")
         page.wait_for_function("App.family && !App.family.partial", timeout=120_000)
@@ -184,7 +185,7 @@ def page_results():
             toWidth: document.getElementById('tofield').getBoundingClientRect().width,
             hash: location.hash, slMax: +document.getElementById('sl').max })""")
         # a shared loop link reopens the same loop
-        page.goto(SIMPLE_HTML.resolve().as_uri() + "#l~-122.42713~37.75972~w~3.5~1~Dolores_20Park",
+        page.goto(SIMPLE_HTML.resolve().as_uri() + "#l~-84.37189~33.78905~w~3.5~1~Piedmont_20Park",
                   wait_until="load", timeout=240_000)
         page.reload(wait_until="load", timeout=240_000)
         page.wait_for_function("window.App && App.family && App.family.loop", timeout=240_000)
@@ -204,8 +205,10 @@ def test_loops_close_on_themselves_and_are_flat(page_results):
         assert lp["first"] == r["src"] and lp["last"] == r["src"] and lp["connected"], lp
         assert abs(lp["length"] - target) <= 0.12 * target, lp
         assert lp["overlap"] <= 0.3 and lp["round"] >= 0.2, lp
-    # the flattest loop climbs well under what a typical loop from here does
-    assert r["loops"][0]["gain"] < 0.75 * r["median"], r
+    # the flattest loop climbs under what a typical loop from here does
+    # (by less than in San Francisco, where it was a quarter: Piedmont Park
+    # has rolling ground on every side and no promenade to hide on)
+    assert r["loops"][0]["gain"] < 0.8 * r["median"], r
     assert r["ms"] < 5000, r
 
 
@@ -214,10 +217,10 @@ def test_out_and_backs_are_offered_only_when_allowed_and_are_flatter(page_result
     r = out["outback"]
     assert all(lp["kind"] != "outback" for lp in r["loops"])
     best = r["ob"][0]
-    # from the Marina the flattest run is the promenade there and back
+    # from Krog Street the flattest run is the BeltLine there and back
     # (overlap counts the second pass over a street, so there and back is 0.5)
     assert best["kind"] == "outback" and best["overlap"] > 0.4, best
-    assert best["gain"] < 0.5 * r["loops"][0]["gain"], (best, r["loops"][0])
+    assert best["gain"] < 0.85 * r["loops"][0]["gain"], (best, r["loops"][0])
     assert abs(best["length"] - 4 * 1609.344) <= 0.25 * 1609.344
 
 
@@ -230,21 +233,21 @@ def test_the_loop_button_folds_the_destination_away_and_back(page_results):
     assert on["markers"] == 1
     assert abs(on["stats"] - on["target"]) <= 0.15 * on["target"]
     assert "loop" in on["delta"]
-    assert off["to"] == "Marina Green" and off["toWidth"] > 100
+    assert off["to"] == "Krog Street Market" and off["toWidth"] > 100
     assert off["slMax"] == 1 and off["hash"].startswith("#t~")
-    assert link["loop"] and link["mi"] == 3.5 and link["from"] == "Dolores Park"
+    assert link["loop"] and link["mi"] == 3.5 and link["from"] == "Piedmont Park"
     assert link["slVal"] == 3.5 and link["idx"] == min(1, link["n"] - 1)
 
 
-def test_calm_streets_keep_a_bike_off_divisadero(page_results):
+def test_calm_streets_keep_a_bike_off_boulevard(page_results):
     out, _ = page_results
     on, off = out["calm_on"], out["calm_off"]
     assert on["calm"] and not off["calm"]
     assert not on["rowHidden"]
     assert on["token"].split("~")[5] == "b" and off["token"].split("~")[5] == "bx"
-    assert off["streets"].get("Divisadero Street", 0) > 3000
-    assert on["streets"].get("Divisadero Street", 0) < 500
-    assert on["streets"].get("Scott Street", 0) > 3000
+    assert off["streets"].get("Boulevard Northeast", 0) > 1500
+    assert on["streets"].get("Boulevard Northeast", 0) < 300
+    assert on["streets"].get("Parkway Drive Northeast", 0) > 1000
     # calm costs a little real distance and buys a lot of comfort
     assert on["distance_m"] < off["distance_m"] * 1.15
     assert on["stress_m"] < off["stress_m"]
@@ -267,19 +270,23 @@ def test_search_finds_intersections_addresses_and_places(page_results):
     out, _ = page_results
     s = out["search"]
     assert out["intersections"] > 5000 and out["places"] > 5000 and out["hasAddresses"]
-    assert s["24th & mission"][0] == ["24th Street & Mission Street", "intersection"]
-    assert s["church st and 24th st"][0][1] == "intersection"
-    assert s["1234 valencia"][0] == ["1234 Valencia St", "address"]
-    assert s["golden gate park"][0] == ["Golden Gate Park", "park"]
-    assert s["coit tower"][0] == ["Coit Tower", "viewpoint"]
-    assert s["ocean beach"][0] == ["Ocean Beach", "beach"]
-    assert any(n == "Caltrain" and k == "station" for n, k in s["caltrain"])
-    assert any("Ferry Building" in n for n, _ in s["ferry building"])
-    # abbreviations and full words match the same corners
-    assert s["geary blvd & 25th ave"][0] == ["25th Avenue & Geary Boulevard", "intersection"]
-    assert s["25th avenue and geary boulevard"][0] == ["25th Avenue & Geary Boulevard", "intersection"]
-    assert s["cabrillo st & 38th ave"][0] == ["38th Avenue & Cabrillo Street", "intersection"]
-    assert any(k == "intersection" and "Geary Boulevard" in n for n, k in s["geary blvd"])
+    corner = ["10th Street Northeast & Peachtree Street Northeast", "intersection"]
+    assert s["10th & peachtree"][0] == corner
+    assert s["boulevard and north ave"][0][1] == "intersection"
+    # the avenue that has the number, not the cul-de-sac that shares its name
+    assert s["675 ponce de leon"][0] == ["675 Ponce de Leon Avenue NE", "address"]
+    assert s["piedmont park"][0] == ["Piedmont Park", "park"]
+    assert s["grant park"][0] == ["Grant Park", "park"]
+    assert s["five points"][0] == ["Five Points", "station"]
+    assert any(n == "Arts Center" and k == "station" for n, k in s["arts center"])
+    assert any("Ponce City Market" in n for n, _ in s["ponce city market"])
+    # abbreviations, quadrants and full words match the same corners
+    assert s["peachtree st ne & 10th st ne"][0] == corner
+    assert s["10th street northeast and peachtree street northeast"][0] == corner
+    assert s["moreland ave & euclid ave"][0][1] == "intersection"
+    assert "Moreland Avenue Northeast" in s["moreland ave & euclid ave"][0][0]
+    assert any(k == "intersection" and "Ponce de Leon Avenue" in n
+               for n, k in s["ponce de leon ave"])
 
 
 def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
@@ -317,18 +324,18 @@ def test_a_new_trip_replaces_the_drawn_route_at_once(page_results):
     """Changing an endpoint redraws without the slider being touched."""
     out, _ = page_results
     r = out["retarget"]
-    assert r["member"] and r["sameAsShown"] and r["endsAtCoit"], r
+    assert r["member"] and r["sameAsShown"] and r["endsAtTarget"], r
 
 
-def test_a_click_in_the_bay_snaps_to_the_nearest_corner(page_results):
+def test_a_click_outside_the_city_snaps_to_the_nearest_corner(page_results):
     """The pin and the route start must agree, even for a click far
     outside the street network."""
     out, _ = page_results
     r = out["snap"]
     assert r["node"] >= 0
     assert abs(r["pinLon"] - r["nodeLon"]) < 1e-9 and abs(r["pinLat"] - r["nodeLat"]) < 1e-9
-    # the Pacific, 6 km west of Ocean Beach, lands on the western shore
-    assert r["nodeLon"] > -122.52 and abs(r["nodeLat"] - 37.76) < 0.03
+    # Decatur, 4 km east of the city limits, lands on the city's eastern edge
+    assert r["nodeLon"] > -84.30 and abs(r["nodeLat"] - 33.775) < 0.03
 
 
 def test_the_share_link_carries_the_trip(page_results):

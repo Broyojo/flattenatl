@@ -1,6 +1,6 @@
-"""Publication-quality static map: San Francisco's low-elevation backbone.
+"""Publication-quality static map: Atlanta's flat-street backbone.
 
-The map answers one question -- *which streets form San Francisco's
+The map answers one question -- *which streets form Atlanta's
 low-elevation transportation backbone?* -- so the visual hierarchy is built
 to answer it and nothing else:
 
@@ -18,14 +18,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from .config import OUTPUT_DIR
+from .config import CITY_NAME, CITY_SLUG, OUTPUT_DIR
+from .neighborhoods import analysis_neighborhoods
 from .utils import get_logger, step
 
 log = get_logger("sf_flat_routes.viz_static")
 
-STATIC_PNG = OUTPUT_DIR / "sf_flat_backbone.png"
-STATIC_PDF = OUTPUT_DIR / "sf_flat_backbone.pdf"
-GRADE_PNG = OUTPUT_DIR / "sf_street_grades.png"
+STATIC_PNG = OUTPUT_DIR / f"{CITY_SLUG}_flat_backbone.png"
+STATIC_PDF = OUTPUT_DIR / f"{CITY_SLUG}_flat_backbone.pdf"
+GRADE_PNG = OUTPUT_DIR / f"{CITY_SLUG}_street_grades.png"
 
 
 # --------------------------------------------------------------------------
@@ -51,10 +52,10 @@ def hillshade(dem: np.ndarray, res: float = 1.0, azimuth: float = 315.0,
 def _load_hillshade(downsample: int = 3, land_mask_geom=None):
     """Hillshade of the study area, masked to land.
 
-    The 3DEP mosaic carries plausible-looking values across the Bay floor and
-    beyond the study area, which render as spurious beige shelves and a hard
-    diagonal at the tile edge.  Masking to the city boundary is both more
-    honest and much cleaner to look at.
+    The 3DEP mosaic runs on past the city limits and stops dead wherever a
+    tile was not fetched, which renders as terrain the analysis says nothing
+    about and a hard edge at the tile boundary.  Masking to the city
+    boundary is both more honest and much cleaner to look at.
     """
     import rasterio
     from rasterio.enums import Resampling
@@ -102,29 +103,32 @@ def make_backbone_map(corridors, edges, neighborhoods, passes=None,
     cor = cor.sort_values("total_score", ascending=False).head(top_n)
 
     with step("rendering the static backbone map", log):
-        from shapely.ops import unary_union
-        land_geom = unary_union(neighborhoods.geometry.values).buffer(60)
+        land_geom = _city_geom(neighborhoods, buffer_m=60.0)
         hs, dem, valid, bounds = _load_hillshade(land_mask_geom=land_geom)
         extent = (bounds.left, bounds.right, bounds.bottom, bounds.top)
 
         fig, ax = plt.subplots(figsize=(13.5, 15.5), dpi=220)
         fig.patch.set_facecolor("#f7f5f0")
-        ax.set_facecolor("#dfe8ef")                       # water
+        ax.set_facecolor("#e9e7e1")                       # outside the city
 
         # --- terrain: hillshade tinted by elevation -------------------
         land = np.where(valid, 1.0, np.nan)
         elev_cmap = LinearSegmentedColormap.from_list(
-            "sf_terrain", ["#f2efe6", "#e8e1cf", "#ddd2b6", "#cfc09b",
-                           "#bfa87f"])
+            "terrain", ["#f2efe6", "#e8e1cf", "#ddd2b6", "#cfc09b",
+                        "#bfa87f"])
+        # stretched over the city's own range: Atlanta's streets all sit
+        # between about 230 and 330 m, so a scale from sea level is one colour
+        z_lo, z_hi = (np.nanpercentile(dem[valid], [0.5, 99.8])
+                      if valid.any() else (0.0, 1.0))
         ax.imshow(dem, extent=extent, origin="upper", cmap=elev_cmap,
-                  norm=Normalize(-10, 250), alpha=1.0, interpolation="bilinear",
+                  norm=Normalize(z_lo, z_hi), alpha=1.0, interpolation="bilinear",
                   zorder=1)
         ax.imshow(hs * land, extent=extent, origin="upper", cmap="gray",
                   alpha=0.52, interpolation="bilinear", vmin=0.15, vmax=0.95,
                   zorder=2)
 
         # --- neighborhoods -------------------------------------------
-        neighborhoods.boundary.plot(ax=ax, color="#ffffff", linewidth=1.0,
+        neighborhoods.boundary.plot(ax=ax, color="#ffffff", linewidth=0.7,
                                     alpha=0.8, zorder=3)
 
         # --- full street network: present for context, low weight -----
@@ -162,7 +166,8 @@ def make_backbone_map(corridors, edges, neighborhoods, passes=None,
                        linewidth=0.8, zorder=9)
 
         # --- labels ---------------------------------------------------
-        for _, r in neighborhoods.iterrows():
+        # the analysis neighborhoods only: all 248 would bury the map
+        for _, r in analysis_neighborhoods(neighborhoods).iterrows():
             c = r.geometry.representative_point()
             ax.text(c.x, c.y, r["neighborhood"].replace("/", "/\n"),
                     fontsize=6.2, color="#33404b", ha="center", va="center",
@@ -194,18 +199,19 @@ def make_backbone_map(corridors, edges, neighborhoods, passes=None,
                     break
 
         # --- frame ----------------------------------------------------
-        b = neighborhoods.total_bounds
+        b = land_geom.bounds
         pad = 700
         ax.set_xlim(b[0] - pad, b[2] + pad)
         ax.set_ylim(b[1] - pad, b[3] + pad)
         ax.set_aspect("equal")
         ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xlabel(""); ax.set_ylabel("")     # geopandas labels projected axes
         for sp in ax.spines.values():
             sp.set_visible(False)
 
-        ax.set_title("San Francisco's low-elevation backbone",
+        ax.set_title(f"{CITY_NAME}'s flat-street backbone",
                      fontsize=21, fontweight="bold", color="#14202b",
-                     loc="left", pad=16)
+                     loc="left", pad=28)
         ax.text(0.0, 1.006,
                 f"Streets that repeatedly carry low-gradient routes between "
                 f"neighborhoods  ·  {mode}ing network",
@@ -234,7 +240,7 @@ def make_backbone_map(corridors, edges, neighborhoods, passes=None,
         ax.text(0.995, -0.018,
                 "Street network: Overture Maps (OpenStreetMap, ODbL)  ·  "
                 "Elevation: USGS 3DEP 1 m lidar  ·  "
-                "Neighborhoods: SF Planning / DataSF",
+                "Neighborhoods and city limits: City of Atlanta",
                 transform=ax.transAxes, fontsize=6.4, color="#6a747d",
                 ha="right", va="top")
 
@@ -254,7 +260,17 @@ def _outline(lw: float):
     return [pe.withStroke(linewidth=lw, foreground="white", alpha=0.9)]
 
 
-def _scalebar(ax, bounds, length_m: float = 2000.0):
+def _city_geom(neighborhoods, buffer_m: float = 0.0):
+    """The city limits, or the union of the polygons given when the limits
+    are not on disk (tests, other cities)."""
+    from .download import CITY_LIMITS_GEOJSON
+    from .neighborhoods import city_boundary
+    if CITY_LIMITS_GEOJSON.exists():
+        return city_boundary(buffer_m=buffer_m)
+    return city_boundary(neighborhoods, buffer_m=buffer_m)
+
+
+def _scalebar(ax, bounds, length_m: float = 5000.0):
     # bottom-right, clear of the legend
     x0 = bounds[2] - length_m - 600
     y0 = bounds[1] + 400
@@ -285,9 +301,12 @@ def make_grade_map(edges, neighborhoods, mode: str = "walk"):
 
         fig, ax = plt.subplots(figsize=(12.5, 14.5), dpi=200)
         fig.patch.set_facecolor("#ffffff")
-        ax.set_facecolor("#eef3f6")
-        neighborhoods.plot(ax=ax, facecolor="#f8f7f4", edgecolor="#d8dde1",
-                           linewidth=0.6, zorder=1)
+        ax.set_facecolor("#eef0f0")
+        import geopandas as gpd
+        land_geom = _city_geom(neighborhoods)
+        gpd.GeoSeries([land_geom], crs=edges.crs).plot(
+            ax=ax, facecolor="#f8f7f4", edgecolor="#c9cfd4", linewidth=0.8, zorder=1)
+        neighborhoods.boundary.plot(ax=ax, color="#d8dde1", linewidth=0.4, zorder=1)
         for lo, hi in zip(bounds_g[:-1], bounds_g[1:]):
             sel = net[(net["g"] >= lo) & (net["g"] < hi)]
             if sel.empty:
@@ -296,13 +315,14 @@ def make_grade_map(edges, neighborhoods, mode: str = "walk"):
             sel.plot(ax=ax, color=cmap(norm(lo + 1e-9)), linewidth=lw,
                      alpha=0.95, zorder=2 + bounds_g.index(lo))
 
-        b = neighborhoods.total_bounds
+        b = land_geom.bounds
         ax.set_xlim(b[0] - 500, b[2] + 500); ax.set_ylim(b[1] - 500, b[3] + 500)
         ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xlabel(""); ax.set_ylabel("")
         for sp in ax.spines.values():
             sp.set_visible(False)
-        ax.set_title("San Francisco street gradients", fontsize=19,
-                     fontweight="bold", loc="left", pad=14)
+        ax.set_title(f"{CITY_NAME} street gradients", fontsize=19,
+                     fontweight="bold", loc="left", pad=26)
         ax.text(0.0, 1.005, "Maximum sampled gradient per street segment, "
                             "from USGS 3DEP 1 m lidar",
                 transform=ax.transAxes, fontsize=9.6, color="#4a5560",

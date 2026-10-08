@@ -10,41 +10,69 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 #: Date on which every URL below was last fetched and verified.
-ACCESS_DATE = "2026-09-16"
+ACCESS_DATE = "2026-10-07"
 
 #: Overture Maps release used for the street network.
 OVERTURE_RELEASE = "2026-08-19.0"
 OVERTURE_BUCKET = "https://overturemaps-us-west-2.s3.amazonaws.com"
 OVERTURE_PREFIX = f"release/{OVERTURE_RELEASE}/theme=transportation"
 #: Places and addresses themes of the same release, used only for the route
-#: page's offline place search (fetched 2026-10-04).
+#: page's offline place search.
 OVERTURE_PLACES_PREFIX = f"release/{OVERTURE_RELEASE}/theme=places"
 OVERTURE_ADDRESSES_PREFIX = f"release/{OVERTURE_RELEASE}/theme=addresses"
 OVERTURE_BASE_PREFIX = f"release/{OVERTURE_RELEASE}/theme=base"
 
-#: USGS 3DEP 1 m lidar project covering San Francisco.
+#: USGS 3DEP 1 m lidar project covering Atlanta. The twelve 10 km tiles
+#: below are the ones the city limits (plus a 250 m margin) touch; this
+#: project covers all of that area on its own, so the neighbouring
+#: ``GA_Central_2019_B19`` project, which overlaps the southern tiles, is
+#: not needed.
 TNM_BUCKET = "https://prd-tnm.s3.amazonaws.com"
-LIDAR_PROJECT = "CA_SanFrancisco_B23"
+LIDAR_PROJECT = "GA_Statewide_2018_B18_DRRA"
 LIDAR_PREFIX = f"StagedProducts/Elevation/1m/Projects/{LIDAR_PROJECT}/TIFF"
-LIDAR_TILES = (
-    "USGS_1M_10_x54y418_CA_SanFrancisco_B23.tif",
-    "USGS_1M_10_x54y419_CA_SanFrancisco_B23.tif",
-    "USGS_1M_10_x55y418_CA_SanFrancisco_B23.tif",
-    "USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif",
+LIDAR_TILES = tuple(
+    f"USGS_1M_16_x{x}y{y}_{LIDAR_PROJECT}.tif"
+    for x, y in (
+        (72, 373), (72, 374), (72, 375),
+        (73, 373), (73, 374), (73, 375), (73, 376),
+        (74, 373), (74, 374), (74, 375), (74, 376),
+        (75, 374),
+    )
 )
 
 #: USGS 1/3 arc-second seamless DEM tile, used only to cross-validate the
 #: lidar product (it is ~10 m and far too coarse for street grades).
 SEAMLESS_DEM_URL = (
-    f"{TNM_BUCKET}/StagedProducts/Elevation/13/TIFF/current/n38w123/"
-    "USGS_13_n38w123.tif"
+    f"{TNM_BUCKET}/StagedProducts/Elevation/13/TIFF/current/n34w085/"
+    "USGS_13_n34w085.tif"
 )
 
-#: San Francisco neighborhood polygons.
-NEIGHBORHOOD_URL = (
-    "https://raw.githubusercontent.com/codeforamerica/click_that_hood/"
-    "master/public/data/san-francisco.geojson"
-)
+
+def _arcgis_geojson(layer_url: str, fields: str) -> str:
+    """Query URL returning a whole ArcGIS feature layer as WGS84 GeoJSON."""
+    from urllib.parse import urlencode
+    return f"{layer_url}/query?" + urlencode(
+        {"where": "1=1", "outFields": fields, "outSR": "4326", "f": "geojson"})
+
+
+#: City of Atlanta official neighborhoods (248 polygons, each tagged with its
+#: Neighborhood Planning Unit). The city's own open-data service
+#: (gis.atlantaga.gov/dpcd .../OpenDataService) answered 404 on the access
+#: date, so this is the copy Atlanta BeltLine, Inc. publishes.
+NEIGHBORHOOD_LAYER = ("https://gis.beltline.org/server/rest/services/"
+                      "COA_Neighborhoods_public/FeatureServer/0")
+NEIGHBORHOOD_URL = _arcgis_geojson(NEIGHBORHOOD_LAYER, "name,npu")
+
+#: City of Atlanta limits, from the city's Department of Transportation.
+CITY_LIMITS_LAYER = ("https://services2.arcgis.com/zLeajbicrDRLQcny/arcgis/rest/"
+                     "services/CityLimits_DPW/FeatureServer/0")
+CITY_LIMITS_URL = _arcgis_geojson(CITY_LIMITS_LAYER, "NAME,SQMILES")
+
+#: Atlanta Regional Commission inventory of existing bicycle and trail
+#: facilities across the region (April 2026 edition).
+BIKEWAYS_LAYER = ("https://services1.arcgis.com/Ug5xGQbHsD8zuZzM/arcgis/rest/"
+                  "services/Existing_Facilities/FeatureServer/2")
+BIKEWAYS_URL = _arcgis_geojson(BIKEWAYS_LAYER, "*")
 
 
 @dataclass(frozen=True)
@@ -76,20 +104,20 @@ DATASETS: tuple[Dataset, ...] = (
         licence="ODbL 1.0 (OpenStreetMap contributors); Overture schema CDLA-Permissive 2.0",
         role="Routable street network: geometry, road class, per-mode access "
              "restrictions, bridge/tunnel flags and connector topology.",
-        local="data/raw/overture_segments_sf.parquet",
+        local="data/raw/overture_segments_atl.parquet",
         limitations=(
             "OSM-derived, so completeness and tagging quality vary by area. "
-            "Road classification of SF arterials is inconsistent in places "
-            "(Van Ness Ave, 19th Ave, Lombard St and part of Mission St are "
-            "tagged 'trunk' although they are ordinary surface streets, so "
-            "'trunk' cannot be excluded from walking/biking). A few freeway "
-            "ramp segments carry the surface street's name (Octavia Blvd, "
-            "Junipero Serra Blvd). Sidewalk and crosswalk geometry is present "
+            "'trunk' and 'primary' in Atlanta are ordinary surface arterials "
+            "with sidewalks (Peachtree Road, Ponce de Leon Avenue, Northside "
+            "Drive, Moreland Avenue), so they cannot be excluded from walking "
+            "or cycling; only 'motorway' is grade-separated freeway. The "
+            "BeltLine and PATH trails are mapped under several spellings and "
+            "interim alignments. Sidewalk and crosswalk geometry is present "
             "but of uneven completeness and is deliberately not used."
         ),
-        notes="Read with Parquet row-group bbox pruning: only 7 of 16,384 "
-              "global row groups intersect San Francisco, so the whole "
-              "extract costs a few seconds and ~10 MB instead of 64 GB.",
+        notes="Read with Parquet row-group bbox pruning: only a dozen of the "
+              "release's row groups intersect the study box, so the whole "
+              "extract costs a few seconds and ~22 MB instead of 64 GB.",
     ),
     Dataset(
         key="overture_connectors",
@@ -101,7 +129,7 @@ DATASETS: tuple[Dataset, ...] = (
         licence="ODbL 1.0; Overture schema CDLA-Permissive 2.0",
         role="Authoritative intersection nodes. Using connector IDs for graph "
              "topology avoids geometric snapping tolerances entirely.",
-        local="data/raw/overture_connectors_sf.parquet",
+        local="data/raw/overture_connectors_atl.parquet",
         limitations="Connectors exist only where OSM ways share a node; "
                     "grade-separated crossings correctly do not connect.",
     ),
@@ -111,26 +139,28 @@ DATASETS: tuple[Dataset, ...] = (
         publisher="U.S. Geological Survey, 3D Elevation Program",
         url=f"{TNM_BUCKET}/{LIDAR_PREFIX}/",
         accessed=ACCESS_DATE,
-        resolution="1 m ground sample distance; NAD83/UTM 10N (EPSG:26910); "
-                   "float32 metres above NAVD88",
+        resolution="1 m ground sample distance; NAD83/UTM 16N (EPSG:26916); "
+                   "float32 metres above NAVD88; lidar flown 2018",
         licence="Public domain (U.S. Government work)",
         role="Primary elevation source for all grade and climbing metrics.",
         local="data/raw/dem/*.tif",
         limitations=(
             "Bare-earth interpolation leaves artefacts on bridges, tunnels and "
-            "elevated structures, where the DEM samples the ground or water "
-            "surface underneath rather than the deck -- handled explicitly by "
-            "interpolating elevation across segments flagged is_bridge or "
+            "elevated structures, where the DEM samples the ground, railway "
+            "or freeway underneath rather than the deck -- handled explicitly "
+            "by interpolating elevation across segments flagged is_bridge or "
             "is_tunnel. Residual noise of a few decimetres from vehicles, "
             "curbs and vegetation misclassification is handled by "
-            "Savitzky-Golay smoothing plus a gain dead-band. Four 10 km tiles "
-            "(~523 MB total) are cloud-optimised GeoTIFFs, so windowed reads "
-            "are cheap."
+            "Savitzky-Golay smoothing plus a gain dead-band. Atlanta's tree "
+            "canopy makes the ground returns sparser than in a bare city. "
+            "Anything built or regraded since 2018 (parts of the BeltLine, "
+            "Westside Park) is measured as it was then. Twelve 10 km tiles "
+            "(~3.6 GB total) are cloud-optimised GeoTIFFs."
         ),
     ),
     Dataset(
         key="dem_13",
-        title="USGS 3DEP 1/3 arc-second seamless DEM, tile n38w123",
+        title="USGS 3DEP 1/3 arc-second seamless DEM, tile n34w085",
         publisher="U.S. Geological Survey, 3D Elevation Program",
         url=SEAMLESS_DEM_URL,
         accessed=ACCESS_DATE,
@@ -138,52 +168,67 @@ DATASETS: tuple[Dataset, ...] = (
         licence="Public domain (U.S. Government work)",
         role="Independent cross-check on the 1 m lidar elevations (validation "
              "only -- too coarse for street grades).",
-        local="data/raw/dem_13_n38w123.tif",
+        local="data/raw/dem_13_n34w085.tif",
         limitations="~10 m posting smooths away street-scale relief and "
                     "systematically under-reports maximum grades.",
         optional=True,
     ),
     Dataset(
         key="neighborhoods",
-        title="San Francisco neighborhoods (37-neighborhood planning set)",
-        publisher="San Francisco Planning Department / DataSF, "
-                  "mirrored by Code for America (click_that_hood)",
-        url=NEIGHBORHOOD_URL,
+        title="City of Atlanta official neighborhoods",
+        publisher="City of Atlanta, Department of City Planning; served by "
+                  "Atlanta BeltLine, Inc.",
+        url=NEIGHBORHOOD_LAYER,
         accessed=ACCESS_DATE,
-        resolution="Vector polygons, 37 features",
-        licence="Public domain / open data (City & County of San Francisco)",
-        role="Neighborhood boundaries for origin/destination selection and "
-             "corridor attribution.",
-        local="data/raw/sf_neighborhoods.geojson",
+        resolution="Vector polygons, 248 features, each with its "
+                   "Neighborhood Planning Unit (25 NPUs)",
+        licence="Open data (City of Atlanta)",
+        role="Neighborhood names for origin/destination selection and for "
+             "saying where a corridor, pass or barrier is. The pair analysis "
+             "runs between 36 of them (config.ANALYSIS_NEIGHBORHOODS).",
+        local="data/raw/atl_neighborhoods.geojson",
         limitations=(
-            "This is the long-standing 37-unit San Francisco planning "
-            "neighborhood set, not the newer 41-unit 'Analysis Neighborhoods' "
-            "product. It is used because data.sfgov.org is unreachable from "
-            "the build environment (blocked by egress policy), so the DataSF "
-            "API could not be called; this Code for America mirror is the "
-            "closest reachable equivalent. Boundary vintage is not stated by "
-            "the mirror. The two products differ mainly in how the Sunset, "
-            "Richmond and Twin Peaks areas are subdivided, which affects "
-            "representative-point placement but not the street model."
+            "The polygons cover 333 of the city's 353 km2; rail yards, the "
+            "river edge and recently annexed land belong to no neighborhood. "
+            "The city's own open-data service (gis.atlantaga.gov "
+            "OpenDataService) returned 404 on the access date, so this is "
+            "the copy of the same layer that Atlanta BeltLine, Inc. serves; "
+            "its vintage is not stated."
         ),
         substituted=True,
         substitution_reason=(
-            "DataSF (data.sfgov.org) and sfgov.org are blocked by the "
-            "environment's network policy; the official 41-neighborhood "
-            "Analysis Neighborhoods GeoJSON could not be downloaded."
+            "The City of Atlanta's own feature service for this layer was "
+            "not answering; the BeltLine-hosted copy carries the same "
+            "schema (name, NPU, legal area)."
         ),
+    ),
+    Dataset(
+        key="city_limits",
+        title="City of Atlanta limits",
+        publisher="City of Atlanta, Department of Transportation",
+        url=CITY_LIMITS_LAYER,
+        accessed=ACCESS_DATE,
+        resolution="One polygon, 136.3 sq mi; last edited 2025-07",
+        licence="Open data (City of Atlanta)",
+        role="Clips the street network, the place search and the hillshade "
+             "to the city.",
+        local="data/raw/atl_city_limits.geojson",
+        limitations="Atlanta's limits are ragged and exclude places many "
+                    "people think of as Atlanta: Decatur, most of Druid "
+                    "Hills, East Point, Sandy Springs, Vinings and nearly "
+                    "all of the airport.",
     ),
     Dataset(
         key="overture_places",
         title=f"Overture Maps places (release {OVERTURE_RELEASE})",
         publisher="Overture Maps Foundation (Meta and Microsoft POI data)",
         url=f"{OVERTURE_BUCKET}/{OVERTURE_PLACES_PREFIX}/type=place/",
-        accessed="2026-10-04",
+        accessed=ACCESS_DATE,
         resolution="Point features with names, categories and a confidence score",
         licence="CDLA Permissive 2.0",
         role="Offline place search in the route page (parks, landmarks, "
              "transit, schools, shops, cafes).",
-        local="data/raw/overture_places_sf.parquet",
+        local="data/raw/overture_places_atl.parquet",
         limitations="Point-of-interest coverage and naming are uneven; only "
                     "records with confidence >= 0.6 in routable categories "
                     "are kept. Not used by the analysis itself.",
@@ -194,14 +239,14 @@ DATASETS: tuple[Dataset, ...] = (
         title=f"Overture Maps base theme: land use, infrastructure, land (release {OVERTURE_RELEASE})",
         publisher="Overture Maps Foundation (derived from OpenStreetMap)",
         url=f"{OVERTURE_BUCKET}/{OVERTURE_BASE_PREFIX}/",
-        accessed="2026-10-04",
+        accessed=ACCESS_DATE,
         resolution="Mapped outlines and points with names and OSM-derived classes",
         licence="ODbL 1.0 (OpenStreetMap contributors)",
-        role="Mapped parks, schools, hospitals, plazas, stations, piers, "
-             "bridges, viewpoints, peaks and beaches for the route page's "
+        role="Mapped parks, schools, hospitals, plazas, stations, "
+             "bridges, viewpoints and peaks for the route page's "
              "offline search; these outrank the POI feed, which places the "
              "same names unreliably.",
-        local="data/raw/overture_{land_use,infrastructure,land}_sf.parquet",
+        local="data/raw/overture_{land_use,infrastructure,land}_atl.parquet",
         limitations="Only named features in a fixed class list are used. "
                     "Not used by the analysis itself.",
         optional=True,
@@ -209,38 +254,38 @@ DATASETS: tuple[Dataset, ...] = (
     Dataset(
         key="overture_addresses",
         title=f"Overture Maps addresses (release {OVERTURE_RELEASE})",
-        publisher="Overture Maps Foundation (OpenAddresses / City of San Francisco)",
+        publisher="Overture Maps Foundation (OpenAddresses / county sources)",
         url=f"{OVERTURE_BUCKET}/{OVERTURE_ADDRESSES_PREFIX}/type=address/",
-        accessed="2026-10-04",
+        accessed=ACCESS_DATE,
         resolution="Address points with street number and street name",
-        licence="Open (OpenAddresses sources; SF data is public domain)",
+        licence="Open (OpenAddresses sources)",
         role="Offline street-address search in the route page.",
-        local="data/raw/overture_addresses_sf.parquet",
+        local="data/raw/overture_addresses_atl.parquet",
         limitations="One point per (street, number) is kept; unit numbers "
                     "are dropped. Not used by the analysis itself.",
         optional=True,
     ),
     Dataset(
         key="bike_network",
-        title="SFMTA Bike Network (linear features)",
-        publisher="SFMTA via DataSF",
-        url="https://data.sfgov.org/Transportation/MTA-Bike-Network-Linear-Features/",
-        accessed="2026-10-05 (downloaded by hand; data.sfgov.org is blocked "
-                 "from the build environment)",
-        resolution="5,457 centreline segments with SFMTA facility class "
-                   "(I path, II lane, III route, IV separated), buffering and "
-                   "barrier type; data_as_of 2023-10 to 2026-04",
-        licence="Open data (City & County of San Francisco)",
+        title="Existing bicycle and trail facilities, Atlanta region (April 2026)",
+        publisher="Atlanta Regional Commission",
+        url=BIKEWAYS_LAYER,
+        accessed=ACCESS_DATE,
+        resolution="846 lines across the 19-county region, about 210 of them "
+                   "in the City of Atlanta, with facility type (unprotected "
+                   "lane, protected lane, greenway, sidepath, park trail), "
+                   "buffer and barrier material",
+        licence="CC BY 4.0",
         role="Bike-mode comfort weighting on the route page ('prefer calm "
              "streets'); see bikeways.py.",
-        local="data/raw/sfmta_bike_network.geojson",
+        local="data/raw/arc_bike_facilities.geojson",
         limitations=(
-            "Keyed by CNN, which Overture does not carry, so segments are "
-            "matched to graph edges geometrically (within 12 m and 25 degrees, "
-            "over at least half the edge). Roughly 580 of 760 km match; the "
-            "rest is Presidio and park paths outside the routable graph or "
-            "double-counted one-way pairs. Slow Streets are not in this "
-            "dataset; they are handled through Overture access rules."
+            "Hand-drawn lines with no key into Overture, so they are matched "
+            "to graph edges geometrically (within 12 m and 25 degrees, over "
+            "at least half the edge). There is no signed-route or sharrow "
+            "class, so a street is either a lane, a protected lane, a trail "
+            "or nothing. A regional inventory is coarser than a city's own "
+            "bikeway layer would be."
         ),
         optional=True,
     ),

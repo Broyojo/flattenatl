@@ -32,7 +32,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from .config import PROCESSED_DIR, SF_BBOX
+from .config import CITY_BBOX, LAT_M_PER_DEG, LON_M_PER_DEG, PROCESSED_DIR
 from .download import ADDRESSES_PARQUET, BASE_PARQUETS, PLACES_PARQUET
 from .utils import get_logger, step
 
@@ -105,16 +105,31 @@ _SUFFIX = {
     "EXPY": "Expy", "PLZ": "Plz",
 }
 _DIR = {"N": "N", "S": "S", "E": "E", "W": "W"}
+#: Atlanta addresses end in a quadrant, which the address feed spells out
+#: ("PEACHTREE Street Northeast") and everyone else writes as two letters.
+_QUADRANT = {"NORTHEAST": "NE", "NORTHWEST": "NW", "SOUTHEAST": "SE",
+             "SOUTHWEST": "SW", "NE": "NE", "NW": "NW", "SE": "SE", "SW": "SW"}
+#: Words that stay lower-case inside a street name ("Ponce de Leon").
+_SMALL = {"DE", "LA", "DEL", "OF", "THE", "AT"}
 
 
 def _title_street(raw: str) -> str:
-    """'JOHN MUIR DR' -> 'John Muir Dr'; keeps ordinals like '24TH' -> '24th'."""
+    """'PONCE DE LEON Avenue Northeast' -> 'Ponce de Leon Avenue NE'.
+
+    Also 'JOHN MUIR DR' -> 'John Muir Dr'; keeps ordinals ('10TH' -> '10th').
+    """
     out = []
-    for tok in str(raw).split():
+    toks = str(raw).split()
+    for i, tok in enumerate(toks):
+        up = tok.upper()
         if tok in _SUFFIX:
             out.append(_SUFFIX[tok])
-        elif re.fullmatch(r"\d+(ST|ND|RD|TH)", tok):
-            out.append(tok.lower())
+        elif re.fullmatch(r"\d+(ST|ND|RD|TH)", up):
+            out.append(up.lower())
+        elif up in _QUADRANT and i == len(toks) - 1 and len(out):
+            out.append(_QUADRANT[up])
+        elif up in _SMALL and 0 < i < len(toks) - 1:
+            out.append(up.lower())
         elif tok in _DIR and len(out):
             out.append(tok)
         else:
@@ -131,8 +146,11 @@ def _support(names: pd.Series, lon: np.ndarray, lat: np.ndarray,
     'Dolores Park Tennis Courts' and so on; a stray 'Dolores Park' dropped in
     the Tenderloin has none of that. The feed carries several such strays
     with full confidence, so the name alone cannot pick the right one.
+    (The examples in this module are San Francisco's, where the rules were
+    worked out; Piedmont Park and its conservancy, tennis centre and dog
+    park behave the same way.)
     """
-    cell = radius_m / 111000.0
+    cell = radius_m / LAT_M_PER_DEG
     grid: dict[tuple[int, int], list[int]] = {}
     low = all_names.str.lower().to_numpy()
     for i, (x, y) in enumerate(zip(all_lon, all_lat)):
@@ -144,28 +162,28 @@ def _support(names: pd.Series, lon: np.ndarray, lat: np.ndarray,
             for dy in (-1, 0, 1):
                 for j in grid.get((cx + dx, cy + dy), ()):
                     o = low[j]
-                    if o != n and n in o and abs(all_lon[j] - x) * 88000 < radius_m \
-                            and abs(all_lat[j] - y) * 111000 < radius_m:
+                    if o != n and n in o and abs(all_lon[j] - x) * LON_M_PER_DEG < radius_m \
+                            and abs(all_lat[j] - y) * LAT_M_PER_DEG < radius_m:
                         out[k] += 1
     return out
 
 
-_CITY_SUFFIXES = {"sf", "san francisco", "san francisco ca", "sf ca", "ca",
-                  "san francisco california", "california", "usa"}
-# 'X San Francisco' and 'X SF' are city suffixes even without a comma;
-# a bare trailing 'California' or 'CA' only after one ('Cafe California').
+_CITY_SUFFIXES = {"atl", "atlanta", "atlanta ga", "atl ga", "ga",
+                  "atlanta georgia", "georgia", "usa"}
+# 'X Atlanta' and 'X ATL' are city suffixes even without a comma;
+# a bare trailing 'Georgia' or 'GA' only after one ('Cafe Georgia').
 _CORE_RE = re.compile(
-    r"(?:[\s,\-/]+(?:san francisco|sf)(?:[\s,]+(?:ca|california|usa))?"
-    r"|[,\-/]\s*(?:ca|california|usa))\s*$", re.I)
+    r"(?:[\s,\-/]+(?:atlanta|atl)(?:[\s,]+(?:ga|georgia|usa))?"
+    r"|[,\-/]\s*(?:ga|georgia|usa))\s*$", re.I)
 
 
 def _core(name: str) -> str:
-    """'Dolores Park, San Francisco' -> 'dolores park'."""
+    """'Piedmont Park, Atlanta' -> 'piedmont park'."""
     return _CORE_RE.sub("", str(name)).strip().lower()
 
 
 def _prune_variants(df: pd.DataFrame, radius_m: float = 500.0) -> pd.DataFrame:
-    """Drop 'Dolores Park, San Francisco' when 'Dolores Park' is 200 m away.
+    """Drop 'Piedmont Park, Atlanta' when 'Piedmont Park' is 200 m away.
 
     The places feed carries many user-typed variants of the same name. A
     record is dropped when a better-supported kept name is a prefix of it
@@ -188,15 +206,15 @@ def _prune_variants(df: pd.DataFrame, radius_m: float = 500.0) -> pd.DataFrame:
             # (a branch, a sub-area) only when it is close by
             rest = n[len(k):].strip(" ,-/()").lower()
             if rest in _CITY_SUFFIXES:
-                r = 6000.0                       # 'X, San Francisco' anywhere
+                r = 6000.0                       # 'X, Atlanta' anywhere
             elif groups[i] != groups[j]:
                 continue                         # 'Dolores Park Cafe' is a cafe
             elif support[j] >= 3 and support[i] == 0:
                 r = 6000.0                       # a same-kind variant of a well-known name
             else:
                 r = radius_m
-            if (abs(lon[i] - lon[j]) * 88000 < r
-                    and abs(lat[i] - lat[j]) * 111000 < r):
+            if (abs(lon[i] - lon[j]) * LON_M_PER_DEG < r
+                    and abs(lat[i] - lat[j]) * LAT_M_PER_DEG < r):
                 dup = True
                 break
         if not dup:
@@ -204,6 +222,36 @@ def _prune_variants(df: pd.DataFrame, radius_m: float = 500.0) -> pd.DataFrame:
             by_first.setdefault(first, []).append(i)
     out = df.iloc[kept_idx].reset_index(drop=True)
     log.info("places: %d near-duplicate name variants pruned", len(df) - len(out))
+    return out
+
+
+def _in_city(lon, lat) -> np.ndarray:
+    """Which points fall inside the city limits (plus the network's margin).
+
+    The Overture extracts cover the study box, and around Atlanta most of
+    that box is somewhere else: Decatur, East Point, Sandy Springs, Cobb
+    County.  A search hit out there would drop a pin a mile from the
+    nearest routable street.
+    """
+    import shapely
+
+    lon = np.asarray(lon, dtype="float64"); lat = np.asarray(lat, dtype="float64")
+    box = ((lon >= CITY_BBOX[0]) & (lon <= CITY_BBOX[1])
+           & (lat >= CITY_BBOX[2]) & (lat <= CITY_BBOX[3]))
+    try:
+        from pyproj import Transformer
+
+        from .config import CRS_GEOGRAPHIC, CRS_PROJECTED
+        from .neighborhoods import city_boundary
+        boundary = city_boundary(buffer_m=250.0)
+    except Exception as exc:   # no boundary on disk: the box is the best we have
+        log.warning("city boundary unavailable (%s); places clipped to the box", exc)
+        return box
+    tr = Transformer.from_crs(CRS_GEOGRAPHIC, CRS_PROJECTED, always_xy=True)
+    x, y = tr.transform(lon[box], lat[box])
+    shapely.prepare(boundary)
+    out = np.zeros(len(lon), dtype=bool)
+    out[np.flatnonzero(box)] = shapely.contains_xy(boundary, x, y)
     return out
 
 
@@ -261,8 +309,7 @@ def build_places() -> dict:
     keep |= names.notna() & (support >= 5) & (conf >= 0.6)
     df = pd.DataFrame({"name": names, "group": group.fillna("landmark"),
                        "conf": conf, "lon": lon, "lat": lat, "support": support})[keep]
-    df = df[(df["lon"].between(SF_BBOX[0], SF_BBOX[1]))
-            & (df["lat"].between(SF_BBOX[2], SF_BBOX[3]))]
+    df = df[_in_city(df["lon"], df["lat"])]
     df = (df.sort_values(["support", "conf"], ascending=False)
             .drop_duplicates(["name", "group"])
             .reset_index(drop=True))
@@ -285,8 +332,7 @@ def build_places() -> dict:
     df = _prune_variants(df[~dup].reset_index(drop=True))
     df = pd.concat([base[["name", "group", "lon", "lat"]], df[["name", "group", "lon", "lat"]]],
                    ignore_index=True)
-    df = df[(df["lon"].between(SF_BBOX[0], SF_BBOX[1]))
-            & (df["lat"].between(SF_BBOX[2], SF_BBOX[3]))]
+    df = df[_in_city(df["lon"], df["lat"])]
     df = df.sort_values(["name"]).reset_index(drop=True)
     log.info("places: %d kept of %d POI records plus %d mapped features (%s)",
              len(df) - len(base), len(t), len(base),
@@ -312,13 +358,14 @@ def build_addresses() -> dict:
     t = t[ok].copy(); t["num"] = num[ok].astype(int)
     geom = shapely.from_wkb(t["geometry"].values)
     t["lon"] = [g.x for g in geom]; t["lat"] = [g.y for g in geom]
+    t = t[_in_city(t["lon"], t["lat"])].copy()
     t["street_t"] = t["street"].map(_title_street)
     t = (t.sort_values(["street_t", "num"])
            .drop_duplicates(["street_t", "num"]).reset_index(drop=True))
     streets = sorted(t["street_t"].unique())
     sidx = {s: i for i, s in enumerate(streets)}
     log.info("addresses: %d unique street numbers on %d streets", len(t), len(streets))
-    lon0, lat0 = SF_BBOX[0], SF_BBOX[2]
+    lon0, lat0 = CITY_BBOX[0], CITY_BBOX[2]
     return {
         "streets": streets,
         "street": t["street_t"].map(sidx).to_numpy().astype("<u2"),
@@ -330,13 +377,20 @@ def build_addresses() -> dict:
     }
 
 
-def build_hillshade(width_px: int = 1600) -> dict:
-    """Quiet shaded relief in WGS84, as a palette PNG data URI with bounds."""
+def build_hillshade(width_px: int = 2200) -> dict:
+    """Quiet shaded relief in WGS84, as a palette PNG data URI with bounds.
+
+    Masked to the city limits: the lidar tiles are only fetched where the
+    city touches them, so the corners of the study box are empty, and relief
+    that stops at the edge of the routable network says where the page works.
+    """
     import rasterio
     from PIL import Image
     from rasterio.enums import Resampling
+    from rasterio.features import rasterize
     from rasterio.warp import calculate_default_transform, reproject
 
+    from .config import CRS_GEOGRAPHIC, CRS_PROJECTED
     from .elevation import DEM_MOSAIC
     from .viz_static import hillshade
 
@@ -354,11 +408,28 @@ def build_hillshade(width_px: int = 1600) -> dict:
             nod = src.nodata
         dem = np.where(np.isfinite(dem) & (dem != nod) & (dem > -50), dem, np.nan)
         valid = np.isfinite(dem)
+        try:
+            import geopandas as gpd
+
+            from .neighborhoods import city_boundary
+            city = gpd.GeoSeries([city_boundary(buffer_m=250.0)], crs=CRS_PROJECTED)
+            inside = rasterize([city.to_crs(CRS_GEOGRAPHIC).iloc[0]], out_shape=(h2, w2),
+                               transform=transform, fill=0, default_value=1,
+                               dtype="uint8").astype(bool)
+        except Exception as exc:
+            log.warning("city boundary unavailable (%s); hillshade left unmasked", exc)
+            inside = np.ones((h2, w2), dtype=bool)
         filled = np.where(valid, dem, np.nanmedian(dem))
-        px_m = abs(transform.a) * 111320 * np.cos(np.radians(37.76))
+        valid &= inside
+        px_m = abs(transform.a) * LON_M_PER_DEG
         hs = hillshade(filled, res=px_m, z_factor=1.8)
         shade = (0.72 + 0.28 * hs)[..., None]
-        tint = np.clip(filled / 260, 0, 1)[..., None]
+        # tint by height above the city's own low ground: Atlanta sits on a
+        # plateau, so an absolute scale would paint all of it one shade
+        lo, hi = np.nanpercentile(dem[valid], [1.0, 99.5]) if valid.any() else (0.0, 1.0)
+        # (and at 0.6 of full strength, because most of a plateau is high:
+        # the page should stay paper-coloured, with the ridges a shade darker)
+        tint = 0.6 * np.clip((filled - lo) / max(hi - lo, 1.0), 0, 1)[..., None]
         base = np.array([243, 242, 238], float); dark = np.array([196, 194, 186], float)
         rgb = (base * (1 - tint * 0.45) + dark * (tint * 0.45)) * shade
         img = np.zeros((h2, w2, 4), np.uint8)

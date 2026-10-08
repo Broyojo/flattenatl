@@ -5,14 +5,14 @@ byte of data embedded, so they can be moved around and opened directly, and
 both route in the browser over the packed graph (``webgraph.py``) with the
 same cost model Python uses.
 
-* **Explorer** (``outputs/sf_flat_routes_map.html``): every analysis layer
+* **Explorer** (``outputs/atl_flat_routes_map.html``): every analysis layer
   (gradient-coloured network, corridors, passes, barriers, basins, bike
   facilities), the four objectives with live weight sliders, Pareto readout
   and the cost-warped city. Dense by design; this is the working view.
 * **Route page**: one card with origin, destination and a shortest-to-
   flattest slider over a quiet hillshade. Place search is offline
   (intersections from the graph, Overture places and addresses packed into
-  the page). Written twice: as ``outputs/sf_flat_route_finder.html``, one
+  the page). Written twice: as ``outputs/atl_flat_route_finder.html``, one
   file that opens from disk, and as the static site in ``site/`` (HTML, CSS,
   JS, the gzipped graph and the hillshade as separate cacheable files),
   which GitHub Pages serves as the demo.
@@ -25,14 +25,15 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import OUTPUT_DIR, PRODUCT_NAME, REPO_URL, SITE_DIR, SITE_DOMAIN, SITE_URL
+from .config import (CITY_NAME, CITY_SLUG, OUTPUT_DIR, PRODUCT_NAME, REPO_URL,
+                     SITE_DIR, SITE_DOMAIN, SITE_URL)
 from .utils import get_logger, human_bytes, step
 
 log = get_logger("sf_flat_routes.viz_interactive")
 
-INTERACTIVE_HTML = OUTPUT_DIR / "sf_flat_routes_map.html"
+INTERACTIVE_HTML = OUTPUT_DIR / f"{CITY_SLUG}_flat_routes_map.html"
 #: The route finder as one self-contained file, and as a static site.
-SIMPLE_HTML = OUTPUT_DIR / "sf_flat_route_finder.html"
+SIMPLE_HTML = OUTPUT_DIR / f"{CITY_SLUG}_flat_route_finder.html"
 SITE_INDEX = SITE_DIR / "index.html"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
@@ -135,16 +136,16 @@ def build_layers(ctx, corridors, passes, barriers, basins):
 #: without anyone having to know which neighborhoods to pick. Notes are
 #: filled in from the analysis outputs at build time.
 _EXAMPLE_PAIRS = (
-    ("Mission", "Outer Sunset", "walk", "min_climb",
-     "crossing the city east to west"),
-    ("Noe Valley", "Financial District", "walk", "min_climb",
-     "almost all the climbing is optional"),
-    ("Bayview", "Golden Gate Park", "walk", "min_climb",
-     "the biggest single saving in the city"),
-    ("Mission", "Marina", "bike", "balanced",
-     "by bicycle, over the northern saddles"),
-    ("West of Twin Peaks", "Downtown/Civic Center", "walk", "grade_averse",
-     "behind the Twin Peaks barrier: no cheap way over"),
+    ("Midtown", "Grant Park", "walk", "min_climb",
+     "across the middle of the city"),
+    ("Adamsville", "Underwood Hills", "walk", "min_climb",
+     "the most climbing avoided for the least detour"),
+    ("Chastain Park", "West End", "walk", "min_climb",
+     "the length of the city, north to south"),
+    ("Georgia Tech", "Inman Park", "bike", "balanced",
+     "by bicycle, across Downtown"),
+    ("Paces", "Downtown", "walk", "grade_averse",
+     "up from the Chattahoochee side"),
 )
 
 
@@ -194,12 +195,23 @@ def _render(payload: dict) -> str:
     return html.replace("/*__DATA__*/", json.dumps(payload, separators=(",", ":")))
 
 
+def _trip_alt(payload: dict) -> str:
+    """'A and B', the opening trip, for the preview image's alt text."""
+    trip = payload.get("default") or []
+    if len(trip) == 2:
+        return f"{trip[0]['label']} and {trip[1]['label']}"
+    return "two places in the city"
+
+
 def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) -> str:
     """The route page: assets inlined (one file) or linked (the site).
 
     ``assets`` maps each plain asset name to its content-hashed file name.
     """
     html = _asset("simple.html").replace("/*__REPO_URL__*/", REPO_URL)
+    # "125,000", the arc count rounded to the nearest five thousand
+    n_arcs = int((payload.get("meta") or {}).get("n_arcs") or 0)
+    html = html.replace("/*__N_ARCS__*/", f"{round(n_arcs / 5000) * 5000:,}")
     if linked:
         a = assets or {}
         html = html.replace('<style>/*__LEAFLET_CSS__*/</style>',
@@ -215,9 +227,9 @@ def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) ->
             '<link rel="icon" href="favicon.svg" type="image/svg+xml">',
             '<meta property="og:type" content="website">',
             f'<meta property="og:title" content="{PRODUCT_NAME}">',
-            '<meta property="og:site_name" content="Flatten SF">',
+            f'<meta property="og:site_name" content="{PRODUCT_NAME}">',
             '<meta property="og:description" content="The flattest walking or '
-            'cycling route between any two places in San Francisco, and every '
+            f'cycling route between any two places in {CITY_NAME}, and every '
             'route between it and the shortest one.">',
             f'<meta property="og:url" content="{SITE_URL}">',
             f'<meta property="og:image" content="{SITE_URL}preview.jpg">',
@@ -225,12 +237,12 @@ def _route_page_html(payload: dict, linked: bool, assets: dict | None = None) ->
             '<meta property="og:image:type" content="image/jpeg">',
             '<meta property="og:image:width" content="1200">',
             '<meta property="og:image:height" content="630">',
-            '<meta property="og:image:alt" content="A map of San Francisco with a fan of '
-            'walking routes between Trick Dog and the dragon in Golden Gate Park">',
+            f'<meta property="og:image:alt" content="A map of {CITY_NAME} with a fan of '
+            f'walking routes between {_trip_alt(payload)}">',
             '<meta name="twitter:card" content="summary_large_image">',
             f'<meta name="twitter:title" content="{PRODUCT_NAME}">',
             '<meta name="twitter:description" content="The flattest walking or cycling '
-            'route between any two places in San Francisco, and every route between '
+            f'route between any two places in {CITY_NAME}, and every route between '
             'it and the shortest one.">',
             f'<meta name="twitter:image" content="{SITE_URL}preview.jpg">',
             f'<link rel="preload" href="{payload["bundle_url"]}" as="fetch" crossorigin>',
@@ -252,19 +264,19 @@ _FAVICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
 """
 
 
-#: Where the route page opens before anyone types: Trick Dog, in the
-#: Mission, to Naga & the Captainess, the 100-foot sea-serpent sculpture in
-#: the Rainbow Falls pond on JFK Promenade in Golden Gate Park. Chosen by
-#: scoring every pair of well-known Mission bars and Golden Gate Park spots
-#: on the frontier search: the shortest path climbs over the Castro and
-#: Buena Vista hills, the flattest saves about half the climbing for 10%
-#: more distance, and the frontier holds some eighty distinct routes.
+#: Where the route page opens before anyone types: Georgia Tech to Krog
+#: Street Market, on foot. Picked from a dozen pairs of places most people
+#: in the city know: the shortest way goes over every ridge between the two
+#: (3.25 miles, 317 ft of climbing), the flattest follows Marietta Street
+#: and Edgewood Avenue along the old railway ridge (3.64 miles, 212 ft), a
+#: third less climbing for 12% more walking, and the routes in between are
+#: all different streets.
 #: Each entry is (label, place names to try in order, fallback), where the
 #: fallback is a neighborhood access point or a (lon, lat) pair for a spot
 #: the index does not carry.
 _DEFAULT_TRIP = (
-    ("Trick Dog", ("Trick Dog",), "Mission"),
-    ("The Dragon, Golden Gate Park", (), (-122.4779, 37.7716)),
+    ("Georgia Tech", ("Georgia Tech",), (-84.39881, 33.77609)),
+    ("Krog Street Market", ("Krog Street Market",), (-84.36405, 33.75652)),
 )
 
 
@@ -291,9 +303,20 @@ def _default_trip(places: dict | None, points: dict) -> list[dict]:
     return out
 
 
+#: Neighborhoods smaller than this are not labelled on the route page unless
+#: they are in the analysis set. Atlanta has 248, some a few blocks across.
+LABEL_MIN_KM2 = 1.5
+
+
 def _labels(ctx) -> list[dict]:
     """Sparse neighborhood labels for the route page's base map."""
-    nb = ctx.neighborhoods.to_crs("EPSG:4326")
+    from .config import ANALYSIS_NEIGHBORHOODS
+
+    nb = ctx.neighborhoods
+    if "area_km2" in nb.columns and len(nb) > 60:
+        nb = nb[(nb["area_km2"] >= LABEL_MIN_KM2)
+                | nb["neighborhood"].isin(ANALYSIS_NEIGHBORHOODS)]
+    nb = nb.to_crs("EPSG:4326")
     out = []
     for _, r in nb.iterrows():
         p = r.geometry.representative_point()
@@ -385,8 +408,12 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
     (SITE_DIR / "favicon.svg").write_text(_FAVICON, encoding="utf-8")
     (SITE_DIR / ".nojekyll").write_text("", encoding="utf-8")
     # GitHub Pages reads the custom domain from here on branch deploys and
-    # from Settings -> Pages on Actions deploys; shipping it covers both
-    (SITE_DIR / "CNAME").write_text(SITE_DOMAIN + "\n", encoding="utf-8")
+    # from Settings -> Pages on Actions deploys; shipping it covers both.
+    # With no custom domain there must be no CNAME file at all.
+    if SITE_DOMAIN:
+        (SITE_DIR / "CNAME").write_text(SITE_DOMAIN + "\n", encoding="utf-8")
+    else:
+        (SITE_DIR / "CNAME").unlink(missing_ok=True)
     site_bytes = sum(f.stat().st_size for f in SITE_DIR.rglob("*") if f.is_file())
     log.info("wrote %s (%s) and the site in %s (%s)", SIMPLE_HTML.name,
              human_bytes(SIMPLE_HTML.stat().st_size), SITE_DIR.name, human_bytes(site_bytes))
@@ -401,6 +428,7 @@ def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
     but are no longer needed: the map routes for itself rather than looking
     up precomputed answers.
     """
+    from .passes import BASIN_ELEV_M
     from .webgraph import build_payload, bundle
 
     with step("preparing interactive map layers", log):
@@ -424,7 +452,13 @@ def make_interactive_map(ctx, corridors, passes, barriers, pairs_df=None,
     payload = {
         "manifest": packed["manifest"], "bundle": packed["b64"],
         "meta": packed["meta"], "points": pts, "neighborhood_names": names,
-        "examples": _examples(pts),
+        "examples": _examples(pts), "default_pair": list(_EXAMPLE_PAIRS[0][:2]),
+        "basin_elev_m": round(BASIN_ELEV_M),
+        # CARTO's free dark basemap now answers every request with an "API
+        # key required" tile, so the explorer draws on its own background:
+        # the street canvas is the map. Set True again if a keyed or
+        # self-hosted tile source replaces the URL in app.js.
+        "basemap": False,
     }
 
     with step("writing the explorer HTML", log):

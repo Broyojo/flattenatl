@@ -140,15 +140,18 @@ from sf_flat_routes.config import PROCESSED_DIR  # noqa: E402
 
 @pytest.mark.skipif(not (PROCESSED_DIR / "edges_metrics.parquet").exists(),
                     reason="processed network not built")
-def test_slow_streets_are_walkable_and_bikeable():
-    """Cabrillo, Page, Shotwell and 12th Avenue are SF Slow Streets: closed
-    to through traffic, open to everyone else. The access parser once read
-    their all-modes destination rule as closing them to walking."""
+def test_trails_are_walkable_and_bikeable():
+    """The BeltLine, PATH400 and the Proctor Creek Greenway are closed to
+    motor vehicles and open to everyone else. The access parser once read an
+    all-modes rule ahead of the mode-specific one (on San Francisco's Slow
+    Streets) and closed such streets to walking; a trail city would lose
+    its best corridors the same way."""
     import pandas as pd
     e = pd.read_parquet(PROCESSED_DIR / "edges_metrics.parquet",
                         columns=["name", "cls", "walk_ok", "bike_ok", "length_m"])
-    for street in ("Cabrillo Street", "Page Street", "Shotwell Street"):
-        s = e[(e["name"] == street) & (e["cls"] == "residential")]
-        assert len(s) > 20, street
+    for street in ("Atlanta Beltline Eastside Trail", "Atlanta Beltline Westside Trail",
+                   "PATH400", "Proctor Creek Greenway"):
+        s = e[e["name"] == street]
+        assert len(s) >= 8, street
         assert s["walk_ok"].mean() > 0.95, (street, s["walk_ok"].mean())
         assert s["bike_ok"].mean() > 0.95, (street, s["bike_ok"].mean())

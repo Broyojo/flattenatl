@@ -37,11 +37,11 @@ playwright = pytest.importorskip("playwright.sync_api",
 
 #: Pairs chosen to span flat and hilly parts of the city, and both modes.
 PAIRS = [
-    ("Mission", "Outer Sunset"), ("Noe Valley", "Financial District"),
-    ("Inner Richmond", "Downtown/Civic Center"), ("Bayview", "Golden Gate Park"),
-    ("Bernal Heights", "Marina"), ("Chinatown", "Inner Sunset"),
-    ("Excelsior", "South of Market"), ("Potrero Hill", "Western Addition"),
-    ("Presidio", "Visitacion Valley"), ("Twin Peaks", "Marina"),
+    ("Midtown", "Grant Park"), ("Downtown", "Buckhead Village"),
+    ("Georgia Tech", "Inman Park"), ("Chastain Park", "West End"),
+    ("Adamsville", "Underwood Hills"), ("Kirkwood", "Vine City"),
+    ("Paces", "Old Fourth Ward"), ("Collier Heights", "East Atlanta"),
+    ("Ben Hill", "Virginia Highland"), ("South River Gardens", "Bolton"),
 ]
 
 
@@ -192,7 +192,7 @@ def warp_result():
             "App.warp && !document.getElementById('busy').classList.contains('on')",
             timeout=180_000)
         out = page.evaluate("""() => {
-            const f = Warp.frame(37.76, -122.44), pts = App.DATA.points.walk, shift = {};
+            const f = Warp.frame(33.765, -84.42), pts = App.DATA.points.walk, shift = {};
             for (const n of Object.keys(pts)) {
                 const [lon, lat] = pts[n];
                 const [wlon, wlat] = App.warp.transform(lon, lat);
@@ -291,12 +291,15 @@ def test_the_warp_fits_the_cost_matrix_reasonably(warp_result):
     assert out["stress"] < 0.25, f"stress {out['stress']:.3f} is too high to read"
 
 
-def test_hilly_neighborhoods_move_more_than_flat_ones(warp_result):
-    """The whole point: a ridge pushes places apart; the flats stay put."""
+def test_cut_off_neighborhoods_move_more_than_central_ones(warp_result):
+    """The whole point: places that are costly to reach move away, places in
+    the middle of the ridge network stay put. In Atlanta the far movers are
+    the corners of the city, behind a creek valley and a neck in the city
+    limits; the west side around Grove Park hardly moves at all."""
     out, _ = warp_result
     s = out["shift"]
-    hilly = max(s.get("Twin Peaks", 0), s.get("West of Twin Peaks", 0))
-    flat = min(s.get("Mission", 1e9), s.get("South of Market", 1e9),
-               s.get("Financial District", 1e9))
-    assert hilly > 2 * flat, f"hilly {hilly:.0f} m vs flat {flat:.0f} m"
-    assert hilly > 1500
+    far = max(s.get("Midwest Cascade", 0), s.get("South River Gardens", 0))
+    near = min(s.get("Grove Park", 1e9), s.get("Mozley Park", 1e9),
+               s.get("Georgia Tech", 1e9))
+    assert far > 2 * near, f"far {far:.0f} m vs near {near:.0f} m"
+    assert far > 1500

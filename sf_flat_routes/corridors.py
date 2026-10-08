@@ -1,4 +1,4 @@
-"""Discovery of San Francisco's low-elevation corridors.
+"""Discovery of Atlanta's flat corridors.
 
 The question is not "which streets are flat" -- thousands are -- but "which
 flat streets does the city's geography force low-gradient traffic onto".  A

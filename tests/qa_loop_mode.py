@@ -71,12 +71,12 @@ def run(viewport, label):
         page.click("#mode button[data-v=walk]"); settle(); s = st()
         check("back to walk: calm row hidden, hash w", not s["calmrow"] and s["hash"].split("~")[3] == "w" and s["famLoop"], s)
         # 7. click the map far away: moves the start
-        page.evaluate("() => App.map.fire('click', { latlng: L.latLng(37.8060, -122.4435) })"); settle(); s = st()
+        page.evaluate("() => App.map.fire('click', { latlng: L.latLng(33.78905, -84.37189) })"); settle(); s = st()
         check("map click in loop mode moves the start and recomputes", s["from"] and s["from"] != s0["from"] and s["famLoop"] and s["inView"] and s["markers"] == 1, s)
         # 8. type a new start
-        page.fill("#from", "Dolores Park"); page.wait_for_timeout(400)
+        page.fill("#from", "Grant Park"); page.wait_for_timeout(400)
         page.keyboard.press("Enter"); settle(); s = st()
-        check("typed start: label, loop recomputed, fitted", "Dolores" in (s["from"] or "") and s["famLoop"] and s["inView"], s)
+        check("typed start: label, loop recomputed, fitted", "Grant" in (s["from"] or "") and s["famLoop"] and s["inView"], s)
         # 9. share link text matches the hash
         url = page.evaluate("() => App.shareUrl()")
         check("share url carries the loop hash", url.endswith(s["hash"]), [url, s["hash"]])
@@ -86,10 +86,10 @@ def run(viewport, label):
         check("loop off: slider back, rows hidden, fitted", s["slMin"] == 0 and s["slMax"] == 1 and not s["obrow"] and s["inView"] and s["toWidth"] > 100, s)
         check("loop off: texts are the route's", "routes" in s["status"] and ("shortest" in s["delta"].lower()), s)
         # 11. reload from a loop link with out-and-back and an index
-        page.goto("about:blank"); page.goto(BASE + "#l~-122.44350~37.80600~wo~3.5~1~Marina_20Green", wait_until="load"); settle(); s = st()
-        check("loop link: everything restored", s["loop"] and s["outBack"] and s["obChecked"] and s["loopMi"] == 3.5 and s["idx"] == min(1, s["n"] - 1) and s["from"] == "Marina Green" and s["kind"] in ("outback", "petal", "triangle", "polygon"), s)
+        page.goto("about:blank"); page.goto(BASE + "#l~-84.37189~33.78905~wo~3.5~1~Piedmont_20Park", wait_until="load"); settle(); s = st()
+        check("loop link: everything restored", s["loop"] and s["outBack"] and s["obChecked"] and s["loopMi"] == 3.5 and s["idx"] == min(1, s["n"] - 1) and s["from"] == "Piedmont Park" and s["kind"] in ("outback", "petal", "triangle", "polygon"), s)
         check("loop link: fitted on load", s["inView"] and s["share"] >= 0.35, s)
-        page.goto("about:blank"); page.goto(BASE + "#l~-122.44350~37.80600~w~4~9~Marina_20Green", wait_until="load"); settle(); s = st()
+        page.goto("about:blank"); page.goto(BASE + "#l~-84.37189~33.78905~w~4~9~Piedmont_20Park", wait_until="load"); settle(); s = st()
         check("loop link with a too-big index clamps", s["idx"] == s["n"] - 1 and not s["outBack"], s)
         # 12. a rapid burst: loop on, slider, toggle, loop off, before anything finishes
         page.goto("about:blank"); page.goto(BASE, wait_until="load"); settle()
@@ -104,8 +104,8 @@ def run(viewport, label):
         settle(); s = st()
         check("rapid burst ends as a consistent loop", s["loop"] and s["famLoop"] and s["loopMi"] == 6 and s["outBack"] and s["kind"] == "outback" and "loops tried" in s["status"] and s["delta"].startswith("Out and back."), s)
         # 13. the edge of the city at 15 mi
-        page.goto("about:blank"); page.goto(BASE + "#l~-122.50300~37.71500~w~15~0~Fort_20Funston", wait_until="load"); settle(); s = st()
-        check("15 mi from Fort Funston: a result and a sane message", s["famLoop"] and s["n"] >= 1 and (("loops tried" in s["status"]) or ("closest" in s["status"])) and len(s["delta"]) > 10 and s["inView"], s)
+        page.goto("about:blank"); page.goto(BASE + "#l~-84.50600~33.69300~w~15~0~Ben_20Hill", wait_until="load"); settle(); s = st()
+        check("15 mi from Ben Hill: a result and a sane message", s["famLoop"] and s["n"] >= 1 and (("loops tried" in s["status"]) or ("closest" in s["status"])) and len(s["delta"]) > 10 and s["inView"], s)
         # 14. reduced motion
         ctx2 = b.new_context(viewport=viewport, reduced_motion="reduce"); p2 = ctx2.new_page(); e2 = []
         p2.on("pageerror", lambda e: e2.append(str(e)))

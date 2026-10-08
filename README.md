@@ -1,26 +1,30 @@
-# flattensf
+# flattenatl
 
-**[flattensf.com](https://flattensf.com/)**: the flattest route between any
-two places in San Francisco, and every route between it and the shortest.
+**[broyojo.com/flattenatl](https://broyojo.com/flattenatl/)**: the flattest
+route between any two places in Atlanta, and every route between it and the
+shortest.
 
-Behind it, an analysis of the city's hidden network of relatively flat
-streets: the routes that connect San Francisco's neighborhoods while
-climbing as little as possible.
+A port of [flattensf](https://github.com/almostimplemented/flattensf)
+([flattensf.com](https://flattensf.com/)) by Drew Edwards, from San
+Francisco to Atlanta: the same route finder and the same analysis, rebuilt
+on Atlanta's streets and lidar. The Python package keeps its upstream name,
+`sf_flat_routes`, so that upstream changes still merge.
 
-![San Francisco's low-elevation backbone](outputs/sf_flat_backbone.png)
+![Atlanta's flat-street backbone](outputs/atl_flat_backbone.png)
 
-San Francisco is famously hilly, but it is hilly in a *structured* way. Its
-hills are separated by valleys, saddles and old dune flats, and those low
-places join up into a network that is far more continuous than the city's
-reputation suggests. This project models that network from authoritative
-elevation and street data, routes across it under several competing
-definitions of "flat", and then works out which streets the city's geography
-forces low-gradient traffic onto.
+Atlanta is not San Francisco. Its hills are not walls with flats between
+them; it is a plateau cut by creeks, and it was laid out along its ridges,
+because that is where the railways found an easy grade. This project models
+the street network from authoritative elevation and street data, routes
+across it under several competing definitions of "flat", and then works out
+which streets the city's geography pushes low-gradient traffic onto.
 
-**The central result: about 14% more walking buys about 39% less climbing.**
-Averaged over all 1,260 ordered neighborhood pairs, the minimum-climbing
-pedestrian route is only 14% longer than the shortest one, yet avoids 39% of
-the ascent and drops the typical steepest pitch from 27% to 17%.
+**The central result: about 7% more walking buys about 19% less climbing.**
+Averaged over 1,260 ordered pairs of neighborhoods, the minimum-climbing
+pedestrian route is 7% longer than the shortest one and avoids 19% of the
+ascent. San Francisco's figures, from the same method, are 14% and 39%:
+rolling ground gives a flat route less to work with than hills you can walk
+around.
 
 The full write-up is in **[`outputs/findings.md`](outputs/findings.md)**, and
 the checks against known ground truth are in
@@ -28,7 +32,7 @@ the checks against known ground truth are in
 
 ## The route finder
 
-**Live: [flattensf.com](https://flattensf.com/)**
+**Live: [broyojo.com/flattenatl](https://broyojo.com/flattenatl/)**
 
 Type where you are and where you are going, then drag the slider from
 **shortest** to **flattest** and watch the route change. The slider steps
@@ -39,14 +43,18 @@ elevation profile and the list of streets follow along, street names are
 drawn on the route itself, and the faint lines are the other routes in the
 family, so you can see where they agree and where they part.
 
+It opens on Georgia Tech to Krog Street Market, on foot: 3.2 miles and
+303 ft of climbing by the shortest way, 3.5 miles and 210 ft by the
+flattest, which goes down Marietta Street and out Edgewood Avenue along the
+old railway ridge, with two dozen routes in between.
+
 On a bike, **prefer calm streets** (on by default) measures distance in
-comfort rather than feet: a block with a protected lane or path from the
-SFMTA bikeway network counts as 0.8 of its length, a quiet street as 1, a
-busy arterial without a lane as 1.4 to 2. The climbing axis is untouched,
-so the slider still runs from the shortest comfortable ride to the
-flattest; on twenty everyday trips across the city it adds about 7% to
-the distance ridden and takes the share on bare arterials from 29% to 1%.
-Untick it and the shortest end is the genuine shortest path.
+comfort rather than feet: a block with a protected lane or a trail from the
+Atlanta Regional Commission's facility inventory counts as 0.8 of its
+length, a quiet street as 1, a busy arterial without a lane as 1.4 to 2.
+The climbing axis is untouched, so the slider still runs from the shortest
+comfortable ride to the flattest. Untick it and the shortest end is the
+genuine shortest path.
 
 The **loop button** next to swap turns the trip into a run or ride that
 starts and ends in the same place. The slider becomes the loop's length
@@ -56,34 +64,42 @@ real intersection) and home by other streets, avoiding any street within
 a block of the way out, and optionally an out-and-back in each direction
 (the flattest way to a turnaround half the distance away, and back).
 Loops that double back on themselves without being an out-and-back, or
-are too thin to be a loop, are dropped, and the flattest of the rest is shown,
-with how much less it climbs than a typical loop of the same length from
-the same start. Out-and-backs are left out unless *Allow out and back*
-is ticked; with it they win more often than not (the Embarcadero, the
-Marina, the Great Highway). The search takes well under a second; up to about 20
-miles it finds a loop from anywhere in the city, beyond that the city
-runs out.
+are too thin to be a loop, are dropped, and the flattest of the rest is
+shown, with how much less it climbs than a typical loop of the same length
+from the same start. Out-and-backs are left out unless *Allow out and back*
+is ticked; near the BeltLine they usually win.
 
 ![The route finder](outputs/screenshot_route_finder.png)
 
-Place search is **offline**: street intersections ("24th & Mission"),
-addresses ("1234 Valencia") and about 10,000 parks, landmarks, stations,
+Place search is **offline**: street intersections ("10th & Peachtree"),
+addresses ("675 Ponce de Leon") and about 7,200 parks, landmarks, stations,
 schools, shops and cafes are built into the page from the street graph and
 Overture's places, addresses and base themes. No geocoding API, so no key
 to leak and nothing to pay for. You can also click the map, or drag either
 pin. "Copy link" gives a URL that reopens the exact trip.
 
+Atlanta street names come with a quadrant, and the search treats
+"10th St NE", "10th Street Northeast" and "10th" as the same street. Where
+a name is shared (Ponce de Leon Avenue, Place, Court, Manor), the street
+that actually has the house number comes first.
+
+**Routes stay inside the Atlanta city limits.** The limits are ragged, and
+they leave out places many people think of as Atlanta: Decatur, most of
+Druid Hills, East Point, Sandy Springs, Vinings, nearly all of the airport.
+A click out there snaps to the nearest street inside the city, and a route
+cannot leave the city even where the flat way round would.
+
 The site is static: [`site/`](site/) holds the page, its CSS and JS, the
-whole street graph as one 4.8 MB gzipped file and the hillshade as a PNG,
-and GitHub Pages serves it as is. Loading it cold takes a couple of seconds
-on a decent connection; after that every route is solved locally. The same
-page is also written as one self-contained 6.8 MB file,
-[`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html),
+whole street graph as one 5.8 MB gzipped file and the hillshade as a PNG,
+and GitHub Pages serves it as is. After the first load every route is
+solved locally. The same page is also written as one self-contained 8 MB
+file,
+[`outputs/atl_flat_route_finder.html`](outputs/atl_flat_route_finder.html),
 which opens straight from disk.
 
 ### The explorer
 
-[`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) is the
+[`outputs/atl_flat_routes_map.html`](outputs/atl_flat_routes_map.html) is the
 working view of the analysis: the network coloured by gradient, the
 discovered corridors, passes, barriers and basins as toggleable layers, the
 four objectives with live α/β/γ sliders, a Pareto readout, and the warped
@@ -91,90 +107,144 @@ city below. It is dense by design.
 
 ![The explorer](outputs/screenshot_interactive.png)
 
-Here it is showing the flattest walking route from the Bayview to Golden Gate
-Park: 7.67 miles and 353 ft of climbing, against 7.01 miles and 1,076 ft for
-the shortest one. The red arcs are the streets steeper than 10% — they trace
-the city's hills like contours — and the thick pale blue lines are the flat
-corridors the analysis discovered. The route threads between them.
+The thick pale blue lines are the flat corridors the analysis discovered;
+the yellow dots are the passes. The explorer draws on a plain dark
+background: upstream used CARTO's dark basemap, which now answers every
+request with an "API key required" tile.
 
 ### The warped city
 
-![San Francisco redrawn by climbing cost](outputs/screenshot_warped.png)
+![Atlanta redrawn by climbing cost](outputs/screenshot_warped.png)
 
 The map can also redraw the city so that distance on the page means
 **climbing cost** rather than geography. Places separated by a ridge move
-apart; places joined by a flat corridor pull together. Twin Peaks drifts
-almost 5 km from where it sits, West of Twin Peaks 3 km, Glen Park 2 km, while
-Bernal Heights and Nob Hill barely move: they are hilly, but they are hilly
-*next to* the flats.
+apart; places joined by a flat corridor pull together. In Atlanta the far
+movers are the corners of the city: Midwest Cascade shifts almost 7 km and
+South River Gardens over 2 km, each behind a creek valley and a neck in the
+city limits, while Grove Park and Mozley Park, in the middle of the west
+side's street grid, move a few hundred metres.
 
 The deformation is driven by the same cost model as the routes, with one
 knob: how many metres of walking a metre of climb is worth. At λ = 0 the
-page shows plain network distance (even then the Bay and the park bend
-things), λ = 1 is the balanced objective, and higher values make the hills
-loom larger; keeping it modest is what stops the routes becoming absurd. A
-morph slider runs the real city into the warped one.
+page shows plain network distance, λ = 1 is the balanced objective, and
+higher values make the hills loom larger. A morph slider runs the real city
+into the warped one.
 
-Method: about 175 anchor intersections (every neighborhood's access point plus
-a 1 km lattice snapped to routable nodes) get a full cost matrix from the
-in-page router; stress majorisation (SMACOF, unit weights) lays them out so
-page distance matches cost, starting from their true positions so the result
-is the least deformation that fits; a Procrustes fit turns and scales the
-layout back onto geography so north stays up; and a thin-plate spline through
-the anchors' displacements carries every street vertex, neighborhood outline,
-corridor and route along with it. The whole thing takes about three seconds
-in the browser, so the weight can be changed live.
-
-This was prompted by a friend's piece that redraws cities by travel time; the
-idea of warping a city by a non-geographic metric is theirs, the metric and
-the construction here are different.
+Method: about 240 anchor intersections (every analysis neighborhood's access
+point plus a 1.5 km lattice snapped to routable nodes) get a full cost
+matrix from the in-page router; stress majorisation (SMACOF, unit weights)
+lays them out so page distance matches cost, starting from their true
+positions so the result is the least deformation that fits; a Procrustes
+fit turns and scales the layout back onto geography so north stays up; and
+a thin-plate spline through the anchors' displacements carries every street
+vertex, neighborhood outline, corridor and route along with it. It takes
+about three seconds in the browser, so the weight can be changed live. The
+spline extrapolates freely past the outermost anchors, so the ragged edges
+of the city are drawn out into spikes; read the middle, not the fringe.
 
 ## What it produces
 
 | Output | What it is |
 |---|---|
-| [`outputs/sf_flat_route_finder.html`](outputs/sf_flat_route_finder.html) | The route finder: origin, destination, walk or bike, and a slider from the shortest route to the flattest, with offline place search. Self-contained — Leaflet, the whole 160,000-arc graph, the place index and a lidar hillshade are embedded. This is the page to share. |
+| [`outputs/atl_flat_route_finder.html`](outputs/atl_flat_route_finder.html) | The route finder: origin, destination, walk or bike, and a slider from the shortest route to the flattest, with offline place search. Self-contained: Leaflet, the whole 205,000-arc graph, the place index and a lidar hillshade are embedded. This is the page to share. |
 | [`site/`](site/) | The route finder as a static site (the same page with the graph and hillshade as separate cacheable files), deployed to GitHub Pages by `.github/workflows/pages.yml`. |
-| [`outputs/sf_flat_routes_map.html`](outputs/sf_flat_routes_map.html) | The explorer: every analysis layer, the four objectives with live α/β/γ sliders, Pareto readout and the warped city. Routes in the browser over the same graph. |
-| [`outputs/sf_flat_backbone.png`](outputs/sf_flat_backbone.png) / `.pdf` | Publication-quality static map of the low-elevation backbone, over a hillshade computed from the same lidar the analysis uses. |
-| [`outputs/sf_street_grades.png`](outputs/sf_street_grades.png) | Citywide street-gradient map. |
-| [`outputs/screenshot_route_finder.png`](outputs/screenshot_route_finder.png), [`screenshot_interactive.png`](outputs/screenshot_interactive.png) | Screenshots of the two pages, for anywhere the HTML cannot be rendered. |
-| [`outputs/screenshot_warped.png`](outputs/screenshot_warped.png) | Screenshot of the city warped by climbing cost. |
-| [`outputs/findings.md`](outputs/findings.md) | Written analysis of the major findings. Every figure is generated from the outputs, not typed in. |
-| [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM, documented street gradients and known flat corridors. |
-| `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered low-elevation corridors: street names, endpoints in lon/lat, neighborhoods connected, length, elevation range, gradient and importance metrics. |
-| `outputs/neighborhood_pairs.csv` | 10,080 routes: every ordered neighborhood pair × 4 objectives × 2 modes, with full metrics. |
+| [`outputs/atl_flat_routes_map.html`](outputs/atl_flat_routes_map.html) | The explorer: every analysis layer, the four objectives with live α/β/γ sliders, Pareto readout and the warped city. Routes in the browser over the same graph. |
+| [`outputs/atl_flat_backbone.png`](outputs/atl_flat_backbone.png) / `.pdf` | Static map of the flat-street backbone, over a hillshade computed from the same lidar the analysis uses. |
+| [`outputs/atl_street_grades.png`](outputs/atl_street_grades.png) | Citywide street-gradient map. |
+| [`outputs/screenshot_route_finder.png`](outputs/screenshot_route_finder.png), [`screenshot_interactive.png`](outputs/screenshot_interactive.png), [`screenshot_warped.png`](outputs/screenshot_warped.png) | Screenshots of the pages, regenerated by `tests/qa_screenshots.py`. |
+| [`outputs/findings.md`](outputs/findings.md) | Written analysis of the findings. The figures are generated from the outputs, not typed in. |
+| [`outputs/validation_report.md`](outputs/validation_report.md) | Validation against an independent DEM and known flat corridors. |
+| `outputs/flat_corridors.geojson` / `.gpkg` / `.csv` | The discovered flat corridors: street names, endpoints in lon/lat, neighborhoods connected, length, elevation range, gradient and importance metrics. |
+| `outputs/neighborhood_pairs.csv` | 10,080 routes: every ordered pair of the 36 analysis neighborhoods × 4 objectives × 2 modes, with full metrics. |
 | `outputs/pareto_frontier.csv` | Distance / climbing / peak-gradient trade-off frontiers for every ordered pair. |
 | [`outputs/sensitivity.md`](outputs/sensitivity.md) / `.csv` | Every finding recomputed under ten perturbations of the elevation parameters and access points. |
 | `outputs/passes.geojson` / `.csv`, `outputs/pass_matrix.csv` | Critical passes, and the lowest possible crossing elevation for every neighborhood pair. |
 | `outputs/barriers.geojson` / `.csv` | Steep streets that inter-neighborhood traffic cannot avoid. |
-| `outputs/lowland_basins.geojson` | The city's flat districts, delineated below 15 m. |
-| `data/processed/sf_street_network.gpkg` | Processed street network as a GeoPackage, ready to open in QGIS or ArcGIS: 87,776 edges with gradient, climbing and access attributes. |
-| `data/processed/edges_metrics.parquet`, `edges_directed.parquet` | The same network as Parquet, plus the full per-direction metric table (175,552 directed edges). |
+| `outputs/lowland_basins.geojson` | The creek valleys, delineated below 260 m. |
+| `data/processed/atl_street_network.gpkg` | Processed street network as a GeoPackage, ready to open in QGIS or ArcGIS: 116,014 edges with gradient, climbing and access attributes. |
+| `data/processed/edges_metrics.parquet`, `edges_directed.parquet` | The same network as Parquet, plus the full per-direction metric table (232,028 directed edges). |
 
 ## Headline findings
 
-- **Two spines carry the city.** The Mission valley floor (Valencia–Guerrero–
-  Market–16th, 6.9 km at 1.3% mean gradient) runs north–south; the
-  Wiggle–Panhandle–Golden Gate Park chain (7.6 km) runs east–west. The
-  analysis was not told either existed.
-- **The Wiggle emerges unprompted.** Asked for a flat bicycle route from
-  Market at Duboce to Haight at Masonic, the model returns the Wiggle. Both
-  routes must gain the same unavoidable 47 m; the shortest one throws away a
-  further 19.2 m of climbing getting there, the Wiggle only 5.9 m — for 0.4%
-  more distance.
-- **One pass dominates the city.** An unnamed path in Golden Gate Park at
-  ~255 ft is the binding constraint for 119 of 630 neighborhood pairs — the
-  lowest point on the ridge dividing the eastern flats from the ocean side.
-  Crossing San Francisco east–west costs that 255 ft whatever you do.
-- **Twin Peaks has no cheap way over it.** The lowest crossings into West of
-  Twin Peaks and Diamond Heights are Lansdale Avenue (696 ft) and Panorama
-  Drive (635 ft). These neighborhoods are the ones the flat network cannot
-  reach.
+- **Flat means high.** Of the twelve most important flat corridors, eight
+  sit above the median street elevation. They are the ridge-top streets
+  beside the old railways (Edgewood and DeKalb, Marietta, Lee and Murphy,
+  Whitehall and Peters) and Peachtree on its own ridge. In San Francisco
+  the flat streets are the valley floors; here the valleys are creeks, and
+  nobody goes far along a creek without climbing out of it.
+- **The top corridor is the railway ridge through Downtown.** Edgewood
+  Avenue, Peachtree Center Avenue, Decatur Street and the BeltLine's
+  Southeast Trail read as one 4.8 km corridor at 1.8% mean gradient,
+  serving 277 of the 1,260 ordered pairs. The analysis was not told any of
+  it existed.
+- **The BeltLine emerges unprompted.** Asked for a flat bicycle route from
+  Glenwood Avenue at Bill Kennedy Way to Piedmont Park, the model leaves
+  Boulevard, which is the shortest way and climbs 61 m, for the Southeast
+  and Eastside trails: 37 m of climbing, 39% less, for 5% more distance.
+- **One pass dominates.** An unnamed path in West End at 1,018 ft is the
+  binding constraint for 184 of 630 neighborhood pairs. The passes are all
+  between about 940 and 1,040 ft, because what has to be crossed is the
+  ridge line itself: the Eastern Continental Divide runs through the city
+  along the railways.
+- **Climbing here is hard to avoid.** Only one pair in 1,260 can halve its
+  climbing by any route. Three in ten can shed a quarter of it, at a median
+  detour of 8%.
 - **Total climbing and peak steepness are different objectives.** The
-  grade-averse route climbs *more* in total than the flattest route (325 ft
-  vs 281 ft) while holding the steepest pitch to 10.8% instead of 17.2%. No
-  single definition of "flat" serves both.
+  grade-averse route climbs *more* in total than the flattest route (482 ft
+  against 448 ft) while holding the steepest pitch to 9.4% instead of
+  16.6%. No single definition of "flat" serves both.
+
+## What changed in the port
+
+The upstream README lists what a new city needs. This is what Atlanta took.
+
+| | San Francisco (upstream) | Atlanta (here) |
+|---|---|---|
+| Projection | NAD83 / UTM 10N (EPSG:26910) | NAD83 / UTM 16N (EPSG:26916) |
+| Lidar | 3DEP `CA_SanFrancisco_B23`, 4 tiles, 0.5 GB | 3DEP `GA_Statewide_2018_B18_DRRA`, 12 tiles, 3.6 GB |
+| Boundary | union of 37 planning neighborhoods | City of Atlanta limits (the 248 neighborhood polygons leave 20 km² of the city unassigned) |
+| Analysis units | 36 neighborhoods | 36 of the 248 official neighborhoods, at least one from each of the 25 NPUs (`config.ANALYSIS_NEIGHBORHOODS`) |
+| Bike facilities | SFMTA Bike Network, downloaded by hand | Atlanta Regional Commission inventory, fetched by the pipeline |
+| Lowland threshold | 15 m above sea level | 260 m contour (streets run from 230 to 330 m) |
+| Validation | published gradients of famous steep streets | no published gradients exist; railway grades and the BeltLine instead |
+| Network | 87,776 edges | 116,014 edges, 5,712 km |
+
+Three things had to be built rather than re-pointed, all in the elevation
+model, and all because Atlanta is crossed by freeways and railways in a way
+San Francisco is not:
+
+1. **Streets under bridges.** Lidar cannot see the ground beneath a deck,
+   and the bare-earth surface there is interpolated from the embankments on
+   either side. Windsor Street passes under I-20 on the level and came out
+   with an 11 m hump; every underpass in the city had one. A routable edge
+   that crosses another line without sharing a node with it is
+   grade-separated from it, so these are found from geometry
+   (`network.find_dem_gaps`): 735 edges pass under a deck, or over a
+   freeway or railway the source data does not flag as bridged. The
+   profile is blanked for 20 m either side of each crossing and
+   interpolated along the street.
+2. **Bridge approaches.** The mapped end of a bridge is rarely the
+   abutment: it usually sits a few metres out over the cut, where the
+   ground has already fallen away, so the approach reads as a level street
+   that drops off a ledge. A deck end now takes its elevation from the
+   highest point within 25 m along the approach (lowest, for a tunnel), and
+   the approach's last metres are redrawn to meet it
+   (`elevation.ABUTMENT_PAD_M`). Ivan Allen Jr Boulevard, Lakewood Avenue
+   and Northside Drive each read 34 to 37% at a bridge end before and 5 to
+   8% after. With both changes in, 7 of about 6,100 arterial blocks of 40 m
+   or more read 20% or steeper.
+3. **A plateau.** Everything that assumed sea level is nearby now works
+   from the city's own range: the hillshade tint, the terrain colours of
+   the static map, the basin threshold.
+
+Smaller changes: place and address search is clipped to the city limits
+rather than the bounding box (most of the box is somewhere else); address
+streets are title-cased with their quadrant ("Ponce de Leon Avenue NE");
+the address search ranks the street that has the number first; the
+explorer's default trip and guided examples come from the build rather
+than being written into the JavaScript; the route finder labels only the
+larger neighborhoods; the warp uses a 1.5 km lattice; there is no CNAME
+unless `SITE_DOMAIN` is set.
 
 ## Methodology
 
@@ -183,83 +253,78 @@ the construction here are different.
 Elevation accuracy drives everything else, so the method is deliberate.
 
 1. **Source.** USGS 3DEP **1 m bare-earth lidar**, project
-   `CA_SanFrancisco_B23` — four cloud-optimised GeoTIFF tiles in
-   EPSG:26910 (NAD83 / UTM 10N), which is also the CRS used for every length
-   and slope computation. No raster reprojection is ever performed.
+   `GA_Statewide_2018_B18_DRRA`, flown in 2018: twelve cloud-optimised
+   GeoTIFF tiles in EPSG:26916 (NAD83 / UTM 16N), which is also the CRS
+   used for every length and slope computation. No raster reprojection is
+   ever performed. The project covers the whole city on its own; the
+   neighbouring `GA_Central_2019_B19` project overlaps the southern tiles
+   and is not needed.
 2. **Noise suppression, spatially.** A Gaussian filter of σ = 3 m is applied
    to the DEM before sampling. Bare-earth lidar still contains
    decimetre-scale artefacts from curbs, parked vehicles, vegetation
-   misclassification and interpolation over occlusions. σ = 3 m is far
-   narrower than a San Francisco street (15–25 m kerb to kerb) and far
-   narrower than the ~100 m block scale on which real street gradient varies.
-3. **Sampling at 5 m.** Chosen empirically. At 10 m spacing the short steep
-   pitches that give the city its reputation were measurably clipped —
-   Bradford Street read 36.8% against a documented 41%, Prentiss Street 32.9%
-   against 37% — while sampling at 5 m returns 41.4% and 36.9% respectively
-   before smoothing.
-4. **Structures.** Where an edge is flagged `is_bridge` or `is_tunnel` the DEM
-   describes the ground or water *under* the deck. Such edges get a linear
-   ramp between their endpoints; endpoints that are themselves unreliable
-   (mid-viaduct nodes) are recovered by solving a discrete Laplace problem
-   over the structure sub-graph with the reliable nodes as boundary
-   conditions — the deck is modelled as the smoothest ramp consistent with
-   where it meets the ground.
+   misclassification and interpolation over occlusions, and under
+   Atlanta's tree canopy the ground returns are sparser than in a bare
+   city.
+3. **Sampling at 5 m.** Inherited from upstream, where it was chosen
+   empirically: at 10 m spacing San Francisco's short steep pitches were
+   measurably clipped.
+4. **Structures.** Where an edge is flagged `is_bridge` or `is_tunnel` the
+   DEM describes the ground, railway or freeway *under* the deck. Such
+   edges get a linear ramp between their endpoints; endpoints that are
+   themselves unreliable (mid-viaduct nodes) are recovered by solving a
+   discrete Laplace problem over the structure sub-graph with the reliable
+   nodes as boundary conditions. Streets under decks, unflagged bridges and
+   bridge approaches are handled as described above.
 5. **Smoothing per street segment, not per edge.** A Savitzky–Golay filter
    (order 2, ~50 m window) is applied to the *concatenated* profile of each
-   contiguous run of a street segment. Smoothing edges in isolation gave the
-   two edges either side of an intersection different elevations for the same
-   corner, and in San Francisco that happens every 80 m.
+   contiguous run of a street segment, so that the two edges either side of
+   an intersection agree about the corner.
 6. **One elevation per intersection.** Each node is reconciled to a single
    elevation and every profile is rubber-sheeted onto it with a linear
-   correction (0.02 m on average). This makes per-edge climbing sum *exactly*
-   to the difference between a route's endpoints.
+   correction (0.05 m on average). This makes per-edge climbing sum
+   *exactly* to the difference between a route's endpoints.
 7. **Dead-band on cumulative gain.** Cumulative gain and loss are computed
    after pruning every elevation reversal smaller than 0.5 m. Pruning
    replaces a run by its **monotone envelope** clamped to the run's
    endpoints, so an oscillation below the dead-band contributes no gain at
-   all, while a genuine sustained climb is preserved to the millimetre *and
-   the shape within the run is preserved* — which is what makes per-edge
-   figures additive along a route.
-
-The last two points matter more than they sound. Two earlier
-implementations were measurably wrong and are kept as regression tests: a
-backlash-operator dead-band charged one dead-band per edge and lost 17 m of
-real climbing on a route over Twin Peaks, and a linear-interpolation
-rectifier redistributed climbing within a segment with errors reaching 51 m.
+   all, while a genuine sustained climb is preserved.
 
 **Validation** (full report in
 [`outputs/validation_report.md`](outputs/validation_report.md)):
 
 - Against the independent USGS 1/3 arc-second DEM at 4,000 random points:
-  mean difference −0.02 m, RMS 0.68 m, 98.5% within 2 m.
-- Against documented street gradients: 6 of 8 within 5 percentage points
-  (Filbert 32.9% vs 31.5%, 22nd Street 32.6% vs 31.5%, Jones 31.1% vs 29.0%,
-  Prentiss 32.9% vs 37%, Baden 34.5% vs 32%, Duboce 28.8% vs 27.5%). Of the
-  two that miss, Nevada Street is a *classification* issue — its published
-  35% pitch is tagged `steps` in OpenStreetMap and measures 34.6% as a
-  stairway — and Bradford Street is smoothing attenuation, discussed under
-  Limitations. The model was not changed to fit either.
-- The Embarcadero and the Great Highway, the city's two genuinely level
-  corridors, come out at 1.07 and 1.16 m of climbing per km. Jones Street
-  comes out at 39.5 m/km — a 37-fold separation.
+  mean difference 0.00 m, RMS 0.51 m, 99.0% within 2 m.
+- Street gradients cannot be validated the way upstream validated them.
+  San Francisco's steep streets have published gradients; Atlanta has no
+  such table that could be traced to a measurement. The report lists the
+  steepest sustained blocks the model finds (Mattison Cove at 18.9% over
+  106 m, Abner Place at 16.3% over 187 m) as readings to be checked on the
+  ground, not as agreement with anything.
+- The old railway grades come out flat: the BeltLine's Eastside, Westside
+  and Southside trails at 1.1 to 1.6% mean gradient, the Proctor Creek
+  Greenway at 0.8%, DeKalb Avenue, Marietta Street and Lee Street beside
+  their railways at 1.5 to 1.6%. Peachtree Street between Downtown and
+  Midtown, the ridge road, is 1.9%: under the 2% line, but it rolls.
+- All eight are in the discovered corridor set.
 - Internal invariants asserted in the test suite: per-edge
-  `gain − loss == net_change` holds to 0.0 for all 175,552 directed edges,
-  and no node has an inconsistent elevation.
+  `gain − loss == net_change` holds for all 232,028 directed edges, and no
+  node has an inconsistent elevation.
 
-**Sensitivity** (`python -m sf_flat_routes sensitivity`; tables in
+**Sensitivity** (`uv run python -m sf_flat_routes sensitivity`; tables in
 [`outputs/sensitivity.md`](outputs/sensitivity.md)). The whole pipeline was
 rebuilt under ten one-at-a-time changes to the elevation parameters (sample
 spacing 2.5/10 m, smoothing window 12.5/50 m, dead-band 0.25/1 m, spatial
 pre-filter 0/6 m) and to which intersection stands in for each neighborhood
-(second- and third-nearest). The headline moves from +14% / 39% to at most
-+15% / 40%; the dominant pass is the same Golden Gate Park crossing at 255 ft
-in all eleven runs; the Wiggle wins in all eleven. The corridors are the least
-rigid part: the street that qualifies as corridor material is 71–99% the same
-by length, and 8–12 of the top twelve lead streets keep their place, but
-where each corridor is cut, and so what it is called, shifts — most under the
-smoothing window — and a handful of borderline streets (Market, Divisadero,
-24th, Greenwich among them) drift in and out of the top twelve. They should be
-read as a tier, not a ranking.
+(second- and third-nearest). The headline stays at +7% distance for 19 to
+20% less climbing in all eleven runs. The dominant pass is the West End
+crossing at 1,018 ft in ten of eleven; with the 6 m pre-filter it moves next
+door to Oakland City at 1,019 ft. The flat BeltLine route wastes 36 to 38 m
+of climbing against the shortest route's 61 m in every run. The corridors
+are the least rigid part: the street that qualifies as corridor material is
+85 to 99% the same by length, the top corridor leads with Edgewood Avenue
+in every run, and 11 or 12 of the top twelve lead streets keep their place,
+with Peachtree Road the one that drifts in. They should be read as a tier,
+not a ranking.
 
 ### Street network
 
@@ -271,38 +336,36 @@ snapping tolerance, and grade-separated crossings correctly stay
 unconnected.
 
 Reading it is cheap despite the theme being ~64 GB: Parquet row-group
-statistics on the `bbox` column mean only **7 of 16,384 global row groups**
-intersect San Francisco, so the extract takes seconds and ~10 MB.
+statistics on the `bbox` column mean only a dozen row groups intersect the
+study box, so the extract takes seconds and ~22 MB. The box is then clipped
+to the City of Atlanta limits plus 250 m, which keeps 116,014 of 188,475
+edges.
 
-Access is derived from Overture `access_restrictions`, whose rule shapes in
-San Francisco are `denied` + `heading=backward` (one-way, 7,034 segments),
-per-mode `denied`/`allowed`/`designated`, and `as_private` /
-`at_destination` conditional access. One-way is enforced for bicycles and
-ignored for pedestrians, since OSM `oneway` describes vehicle movement;
-contraflow bicycle lanes are honoured. A rule for a specific mode outranks
-a rule for all modes: SF's Slow Streets carry "everyone: destination only"
-alongside "foot: allowed, bicycle: designated", and reading the general
-rule first had dropped 9.9 km of them from the walking and cycling graphs.
+Access is derived from Overture `access_restrictions`. One-way is enforced
+for bicycles and ignored for pedestrians, since OSM `oneway` describes
+vehicle movement; contraflow bicycle lanes are honoured. A rule for a
+specific mode outranks a rule for all modes.
 
-Two classification facts shaped the mode filters, both verified against the
-data rather than assumed:
+Classification facts that shaped the mode filters, checked against the
+Atlanta data:
 
-- `trunk` includes **Van Ness Avenue, 19th Avenue, Lombard Street and part of
-  Mission Street** — ordinary surface streets with sidewalks. `trunk`
-  therefore *cannot* be excluded from walking or cycling.
+- `trunk` is Moreland Avenue, Peachtree Road, Northside Drive, Ponce de
+  Leon Avenue and North Avenue: ordinary surface arterials. `trunk`
+  therefore *cannot* be excluded from walking or cycling. It also includes
+  Freedom Parkway, which is not a place to walk, and where the source data
+  marks it closed to pedestrians the model respects that.
 - `motorway` is true grade-separated freeway and is excluded.
-- `steps` (2,652 edges, 35 km) is a real part of the pedestrian network and is
-  **excluded outright for bicycles**. A route suitable for a pedestrian is
-  emphatically not necessarily rideable.
-- `sidewalk` and `crosswalk` subclasses are excluded for both modes: travel is
-  modelled along street centrelines, because including the sidewalk network
-  would represent every street two or three times and wreck corridor
-  aggregation.
+- `steps` (1,108 edges, 9 km) is part of the pedestrian network and is
+  **excluded outright for bicycles**.
+- `sidewalk` and `crosswalk` subclasses are excluded for both modes: travel
+  is modelled along street centrelines, because including the sidewalk
+  network would represent every street two or three times and wreck
+  corridor aggregation.
 
 ### Routing model
 
-Edge cost, in "equivalent metres" — the distance a traveller would consider
-as bad as this edge:
+Edge cost, in "equivalent metres" (the distance a traveller would consider
+as bad as this edge):
 
 ```
 cost = length × mode_multiplier(class)
@@ -314,7 +377,7 @@ cost = length × mode_multiplier(class)
 The threshold terms are **cumulative**: 100 m at 12% incurs the 3%, 5%, 8%
 and 10% penalties simultaneously, so the marginal cost of steepness rises
 super-linearly rather than staying flat. `α` is the substitution rate between
-climbing and distance — Naismith's rule for walking implies about 8 m of flat
+climbing and distance; Naismith's rule for walking implies about 8 m of flat
 walking per metre climbed.
 
 Only `cumulative_gain` ever enters the cost, never net elevation change. A
@@ -332,12 +395,13 @@ Four objectives, all configured in [`sf_flat_routes/config.py`](sf_flat_routes/c
 | `balanced` | 14 | 2 | 2 | flat but without absurd detours |
 
 Bicycle costs additionally carry stress weights (protected cycleway 0.85,
-19th Avenue and Van Ness 1.9) and respect one-way restrictions. These are
-switched **off** for `shortest`, so that every distance-penalty and
-elevation-saved figure is measured against a genuine shortest path. The
-route finder's "prefer calm streets" uses a separate table that also knows
-the SFMTA facility class of each block
-([`bikeways.py`](sf_flat_routes/bikeways.py)).
+trunk roads 1.9) and respect one-way restrictions. These are switched
+**off** for `shortest`, so that every distance-penalty and elevation-saved
+figure is measured against a genuine shortest path. The route finder's
+"prefer calm streets" uses a separate table that also knows the facility
+on each block ([`bikeways.py`](sf_flat_routes/bikeways.py)).
+
+The weights are upstream's and were not retuned for Atlanta.
 
 ### Corridor detection
 
@@ -349,75 +413,50 @@ number of distinct neighborhoods at either end (which separates a citywide
 corridor from a street busy between one pair of districts), and the climbing
 avoided versus the shortest path, apportioned by the edge's share of route
 length. Edges whose own gradient disqualifies them as flat are excluded
-regardless of usage, so the unavoidable climbs *out* of a corridor do not get
-absorbed into it. Contiguous high-scoring edges are then merged, short gaps
-are closed, and the result is labelled by its constituent street names.
+regardless of usage. Contiguous high-scoring edges are then merged, short
+gaps are closed, and the result is labelled by its constituent street names.
 
 ### Routing in the browser
 
-Both pages ship the graph, not a set of answers. Earlier it carried
-~10,000 precomputed routes, which meant it could only speak about the 36
-neighborhood access points; embedding the graph itself turned out to be both
-*smaller* and far more useful.
-
-The packing is in [`sf_flat_routes/webgraph.py`](sf_flat_routes/webgraph.py):
-69,864 nodes, 161,176 directed arcs, 87,776 edge geometries and the vector
-overlays are quantised into typed arrays, concatenated into one buffer and
-gzipped. The browser inflates it with `DecompressionStream` and takes
-`TypedArray` views straight onto the result — no JSON number parsing. For
-the route finder, 11.3 MB of arrays, geometry, places and addresses
-compress to 4.8 MB, so the whole self-contained page is **6.9 MB and
-interactive in under four seconds**, against 19.3 MB for the precomputed
-version.
+Both pages ship the graph, not a set of answers. The packing is in
+[`sf_flat_routes/webgraph.py`](sf_flat_routes/webgraph.py): 95,408 nodes,
+205,727 directed arcs, 116,014 edge geometries and the vector overlays are
+quantised into typed arrays, concatenated into one buffer and gzipped. The
+browser inflates it with `DecompressionStream` and takes `TypedArray` views
+straight onto the result, with no JSON number parsing. For the route
+finder, 13.2 MB of arrays, geometry, places and addresses compress to
+5.8 MB.
 
 Routing is a Dijkstra over a CSR adjacency with a flat binary heap and a
-visit-stamp array, so nothing is reallocated between searches. It settles a
-cross-city route in **about 9 ms** (61 ms worst case observed), which is what
-makes the weight sliders feel live. The cost function is a line-for-line
-mirror of `routing.edge_costs`, including the per-class comfort multipliers
-and the flag that disables them for the `shortest` objective.
-
-The street network is painted directly onto a canvas from the packed arrays,
-with viewport culling and a zoom-dependent minimum edge length. 88,000
-individual Leaflet polylines would not have been usable; one canvas pass is.
+visit-stamp array, so nothing is reallocated between searches. Over ninety
+cross-city trips in headless Chromium on the machine this was built on it
+settled a route in 5 ms at the median and 12 ms at worst. The cost function
+is a line-for-line mirror of `routing.edge_costs`.
 
 The route finder's slider is a **family of routes**: the whole frontier of
 distance against climbing between the two points, every route that no
-other route beats on both counts, sorted from shortest to flattest. The
-first version swept a weighted sum, *length + α × climbing*, over values
-of α. That finds only the frontier's convex hull: a route that is a good
-compromise but sits in a dent of the curve never wins for any α, and on
-some trips the dent holds most of the interesting routes (California &
-Kearny to the Marina jumped straight from the direct route over Russian
-Hill to the Embarcadero loop, with nothing in between). The frontier is
-now found by a bi-objective search, BOA* (bi-objective A* with lazy
-dominance checks, Hernández et al. 2020): labels carry (length, climbing),
-expand in order of bounded length, and a label is dropped on reaching a
-node with no less climbing than a label that got there earlier, which by
-the expansion order was also no longer. The bounds are exact reverse
-Dijkstras on each objective; the search is capped at the length of the
-flattest weighted route (α = 200, beyond which the router walks miles to
-save a few feet) and the climbing of the shortest, and frontier points
-within 0.5 m of climbing are merged. It takes 0.1–0.6 s in the browser for
-trips across the city, during which the shortest route is already shown;
-the slider then runs evenly over up to thirty routes spread along the
-frontier. Along a frontier sorted by distance, climbing can only fall, so
-sliding right never shortens the route and never adds climbing, which is
-what the end labels promise. A genuinely continuous morph between two
-street routes is not meaningful — a path halfway between Valencia and
-Church Street runs through buildings — so the continuity is in the
-trade-off, not the geometry.
+other route beats on both counts, sorted from shortest to flattest. It is
+found by a bi-objective search, BOA* (bi-objective A* with lazy dominance
+checks, Hernández et al. 2020): labels carry (length, climbing), expand in
+order of bounded length, and a label is dropped on reaching a node with no
+less climbing than a label that got there earlier. The bounds are exact
+reverse Dijkstras on each objective; the search is capped at the length of
+the flattest weighted route (α = 200) and the climbing of the shortest, and
+frontier points within 0.5 m of climbing are merged. Three trips of 3 to 10
+miles each produced their 20 to 30 routes in under a tenth of a second.
+Along a frontier sorted by distance, climbing can only fall, so sliding
+right never shortens the route and never adds climbing, which is what the
+end labels promise.
 
-Place search runs on an index packed into the page: intersections are
-derived in the browser from the graph's own street names; parks, schools,
-stations, piers, peaks and beaches come from Overture's base theme (mapped
+Place search runs on an index packed into the page: 8,752 intersections
+are derived in the browser from the graph's own street names; parks,
+schools, stations and bridges come from Overture's base theme (mapped
 OpenStreetMap outlines, which are reliable); landmarks, shops and cafes
-come from Overture's places feed, which is not — the same name recurs at
-several spots, some nowhere near the real thing — so a POI record is kept
+come from Overture's places feed, which is not, so a POI record is kept
 only where neighbouring records corroborate it and is dropped when a
 mapped feature already carries its name
 ([`sf_flat_routes/places.py`](sf_flat_routes/places.py)). Addresses are
-230,000 (street, number) points in 10 bytes each.
+143,000 (street, number) points in 10 bytes each.
 
 ### Passes and barriers
 
@@ -432,103 +471,119 @@ This has an exact solution. Sorting every edge by its crest and adding edges
 to a union-find structure in increasing crest order builds a minimum
 bottleneck spanning tree; the crest of the edge that first connects `s` to
 `t` *is* `pass_height(s,t)`, and the lowest common ancestor in the resulting
-merge tree answers every pair from one construction. The result was checked
-against the routing: the maximum elevation reached on the minimum-climbing
-route is at or above the computed pass height for **all 1,260 pairs, with
-zero violations**.
+merge tree answers every pair from one construction.
 
 Barriers are the complementary view: steep edges carrying heavy
 shortest-path traffic. One that keeps its traffic under the climb-averse
 objectives has no alternative; one that loses it does.
 
-### Neighborhood access points
+### Neighborhoods and access points
 
-A polygon centroid can land in a park, on a cliff, in the water, or outside a
-concave neighborhood entirely. Instead, each neighborhood's representative
-point is the **street-length-weighted centre** of its network nodes — street
-length being a far better proxy for where journeys start than polygon area —
-snapped to the nearest qualifying intersection (degree ≥ 3, named street, of
-an ordinary urban class). The offset from the geometric centroid is recorded
-for audit: across both modes only two points exceed 400 m — Lakeshore at
-453 m, because most of that neighborhood is Lake Merced, and the Presidio at
-444 m for cycling, because its centroid sits in woodland off the rideable
-network.
+Atlanta has 248 official neighborhoods, some a few blocks across. All 248
+are used to say where a corridor, pass or barrier is. The pair matrix runs
+between 36 of them, listed in
+[`config.ANALYSIS_NEIGHBORHOODS`](sf_flat_routes/config.py): at least one
+from each of the 25 Neighborhood Planning Units, so every part of the city
+is an origin, and a second from the larger or more travelled ones. The
+choice is editorial and easy to change.
+
+A polygon centroid can land in a park, a rail yard or a creek bottom.
+Instead, each neighborhood's representative point is the
+**street-length-weighted centre** of its network nodes, snapped to the
+nearest qualifying intersection (degree ≥ 3, named street, of an ordinary
+urban class). The offset from the geometric centroid is recorded for audit:
+four points exceed 400 m, South River Gardens (672 m), Paces (552 m), Ben
+Hill (518 m) and North Buckhead (417 m), all large neighborhoods with
+their streets to one side.
 
 ## Data sources
 
-All URLs verified 2026-09-16 (the three search-only Overture themes on
-2026-10-04). `python -m sf_flat_routes sources` prints the full table with
-limitations.
+All URLs verified 2026-10-07. `uv run python -m sf_flat_routes sources`
+prints the full table with limitations.
 
 | Dataset | Publisher | Resolution / vintage | Licence | Role |
 |---|---|---|---|---|
 | Overture Maps transportation segments & connectors, release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Vector; OSM-equivalent accuracy (~1–5 m) | ODbL 1.0; schema CDLA-Permissive 2.0 | Routable street network: geometry, class, per-mode access, bridge/tunnel flags, topology |
-| USGS 3DEP 1 m bare-earth DEM, project `CA_SanFrancisco_B23` | USGS 3D Elevation Program | 1 m GSD, EPSG:26910, metres above NAVD88 | Public domain | Primary elevation source |
-| USGS 3DEP 1/3 arc-second DEM, tile `n38w123` | USGS 3D Elevation Program | ~10 m, EPSG:4269 | Public domain | Independent cross-check only |
-| San Francisco neighborhoods (37-unit planning set) | SF Planning / DataSF, mirrored by Code for America | 37 polygons | Open data | Neighborhood boundaries |
-| SFMTA Bike Network, linear features | SFMTA via DataSF (downloaded by hand 2026-10-05) | 5,457 centreline segments with facility class I–IV, buffering, barrier type | Open data (CCSF) | Route finder: bike comfort weighting (`bikeways.py`) |
-| Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Explorer bicycle overlay (see limitations) |
-| Overture Maps base theme (land use, infrastructure, land), release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Mapped outlines and points | ODbL 1.0 | Route finder search only: parks, schools, stations, piers, peaks, beaches |
+| USGS 3DEP 1 m bare-earth DEM, project `GA_Statewide_2018_B18_DRRA` | USGS 3D Elevation Program | 1 m GSD, EPSG:26916, metres above NAVD88, flown 2018 | Public domain | Primary elevation source |
+| USGS 3DEP 1/3 arc-second DEM, tile `n34w085` | USGS 3D Elevation Program | ~10 m, EPSG:4269 | Public domain | Independent cross-check only |
+| City of Atlanta official neighborhoods | City of Atlanta Department of City Planning, served by Atlanta BeltLine, Inc. | 248 polygons with NPU | Open data | Neighborhood names; analysis origins and destinations |
+| City of Atlanta limits | City of Atlanta Department of Transportation | One polygon, 136.3 sq mi | Open data | Clips the network, the search index and the hillshade |
+| Existing bicycle and trail facilities, April 2026 | Atlanta Regional Commission | 846 lines region-wide, about 210 in the city, with facility type and buffer | CC BY 4.0 | Route finder: bike comfort weighting (`bikeways.py`) |
+| Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Explorer bicycle overlay |
+| Overture Maps base theme (land use, infrastructure, land), release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Mapped outlines and points | ODbL 1.0 | Route finder search only: parks, schools, stations, bridges |
 | Overture Maps places, release `2026-08-19.0` | Overture Maps Foundation (Meta / Microsoft POI data) | Points with names, categories, confidence | CDLA-Permissive 2.0 | Route finder search only: landmarks, shops, cafes (noisy; see `places.py`) |
-| Overture Maps addresses, release `2026-08-19.0` | Overture Maps Foundation (OpenAddresses / City of San Francisco) | Address points | Open (public domain source) | Route finder search only: street addresses |
+| Overture Maps addresses, release `2026-08-19.0` | Overture Maps Foundation (OpenAddresses / county sources) | Address points | Open | Route finder search only: street addresses |
 
-### Two substitutions, and why
+### One substitution, and why
 
-`data.sfgov.org` and `sfgov.org` are **blocked by the build environment's
-network egress policy**, so two datasets could not be fetched from their
-authoritative source by the pipeline:
+The City of Atlanta's own open-data feature service for neighborhoods
+(`gis.atlantaga.gov/dpcd/.../OpenDataService`) returned 404 on the access
+date. The layer used is the copy of the same dataset that Atlanta BeltLine,
+Inc. serves, with the same schema (name, NPU, legal area); its vintage is
+not stated. It is flagged `[SUBSTITUTED]` in the dataset registry.
 
-1. **Neighborhood boundaries.** The official 41-unit *Analysis Neighborhoods*
-   product could not be downloaded. This project uses the long-standing
-   37-unit San Francisco planning neighborhood set via the Code for America
-   `click_that_hood` mirror — a real, widely used SF boundary set whose union
-   is 122.0 km² against the city's ~121 km² land area. The two products
-   differ mainly in how the Sunset, Richmond and Twin Peaks areas are
-   subdivided, which affects representative-point placement but not the
-   street model. The mirror does not state its boundary vintage.
-2. **SFMTA bikeway network and Slow Streets.** The explorer's bicycle and
-   low-stress layers are derived from Overture/OSM attributes
-   (`class=cycleway`, `living_street`, `pedestrian`, bicycle-designated
-   paths), which carry no SFMTA facility class. The route finder's bike
-   comfort weighting is different: it uses the real SFMTA Bike Network,
-   downloaded by hand to `data/raw/sfmta_bike_network.geojson` and matched
-   to the street graph geometrically (`bikeways.py`: within 12 m and 25°,
-   over at least half of an edge; about 580 of the network's 760 km land on
-   routable edges, the rest being Presidio and park paths and one-way
-   pairs). Slow Streets come through Overture's access rules instead.
-
-Both substitutions are recorded in the dataset registry and flagged
-`[SUBSTITUTED]` by `python -m sf_flat_routes sources`.
+The bike facility inventory is regional and hand-drawn, with no key into
+Overture, so it is matched to the street graph geometrically
+(`bikeways.py`: within 12 m and 25°, over at least half of an edge). The
+279 km of facility inside the city lands on 404 km of routable edge: more
+than its own length, because a trail and the street beside it, or the two
+carriageways of a divided street, both take the facility. It has no
+signed-route or sharrow class, so a street is a lane, a protected lane, a
+trail or nothing.
 
 ## Installation
 
-Python 3.10+.
+Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/almostimplemented/flattensf && cd flattensf
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt        # or: pip install -e ".[dev]"
+git clone https://github.com/Broyojo/flattenatl && cd flattenatl
+uv sync --extra dev
 ```
 
 The geospatial stack (GeoPandas, rasterio, pyproj, shapely, scipy, networkx,
-pyarrow) installs from wheels; no system GDAL is required.
+pyarrow) installs from wheels; no system GDAL is required. Plain pip works
+too: `pip install -e ".[dev]"`, then drop the `uv run` prefix below.
 
 ## Reproducing the analysis
 
 ```bash
-python -m sf_flat_routes all            # everything, in order
+uv run python -m sf_flat_routes all            # everything, in order
 ```
 
-Or stage by stage — each caches its output, so re-running is cheap:
+Or stage by stage; each caches its output, so re-running is cheap:
 
 ```bash
-python -m sf_flat_routes sources        # dataset provenance table
-python -m sf_flat_routes download       # fetch and cache source data (~750 MB)
-python -m sf_flat_routes build-network  # street graph, elevation, edge metrics
-python -m sf_flat_routes analyze        # pairs, Pareto, corridors, passes
-python -m sf_flat_routes validate       # checks against known ground truth
-python -m sf_flat_routes map            # interactive + static maps, and site/
-python -m sf_flat_routes report         # written analysis
+uv run python -m sf_flat_routes sources        # dataset provenance table
+uv run python -m sf_flat_routes download       # fetch and cache source data (~3.9 GB)
+uv run python -m sf_flat_routes build-network  # street graph, elevation, edge metrics
+uv run python -m sf_flat_routes analyze        # pairs, Pareto, corridors, passes
+uv run python -m sf_flat_routes validate       # checks against known ground truth
+uv run python -m sf_flat_routes map            # interactive + static maps, and site/
+uv run python -m sf_flat_routes report         # written analysis
+```
+
+Add `--force` to recompute a stage instead of using its cache. It needs
+about 7 GB of disk (3.9 GB of sources and a 2.6 GB lidar mosaic) and about
+10 GB of memory while the mosaic is smoothed. On the 12-core laptop this
+was built on: about fifteen minutes to download, most of it lidar; 1 m 50 s
+to build the street graph and sample 1.3 M elevation points; 50 s for the
+routing analysis (10,080 routes); and about a minute and a half to render
+the maps.
+
+Ad-hoc routing between analysis neighborhoods:
+
+```bash
+uv run python -m sf_flat_routes route --from Midtown --to "Grant Park"
+uv run python -m sf_flat_routes route --from "Georgia Tech" --to "Inman Park" --mode bike
+```
+
+```
+Midtown  ->  Grant Park   [walk]
+objective        miles  climb ft  loss ft  max %   >5% m   >8% m            vs shortest
+shortest          3.57       320      256   18.4     613      91                       
+min_climb         3.94       241      177    8.6     142       6   +10% dist,    +79 ft climb
+grade_averse      4.04       268      204    7.6      77       0   +13% dist,    +52 ft climb
+balanced          3.79       260      196    7.6     133       0    +6% dist,    +60 ft climb
 ```
 
 ### Deploying the route finder
@@ -537,85 +592,74 @@ python -m sf_flat_routes report         # written analysis
 lidar and Overture data that CI does not have. The workflow in
 [`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes that
 directory to GitHub Pages on every push that touches it. One-time setup in
-the repository: Settings → Pages → Source: **GitHub Actions**, then under
-Custom domain enter `www.flattensf.com` and tick "Enforce HTTPS" once the
-certificate is issued. At the registrar, add a CNAME from `www` to
-`almostimplemented.github.io`, and point the apex at GitHub Pages too
-(A records 185.199.108.153, 185.199.109.153, 185.199.110.153,
-185.199.111.153) so that `flattensf.com` redirects to `www`. Any other
-static host works the same way: upload `site/` and nothing else. The host
-and the page URL used for the canonical link and the social-preview tags
-are `SITE_DOMAIN` and `SITE_URL` in [`config.py`](sf_flat_routes/config.py);
-the preview card itself is `site/preview.jpg`, a 1200×630 JPEG regenerated
-by the screenshot step after every build.
+the repository: Settings → Pages → Source: **GitHub Actions**. The site
+then answers at `https://broyojo.com/flattenatl/` (the account's Pages
+site has the custom domain `broyojo.com`, so project pages are served
+under it and `broyojo.github.io/flattenatl` redirects there), which is
+what `SITE_URL` in [`config.py`](sf_flat_routes/config.py) assumes for the
+canonical link and the social-preview tags.
 
-Add `--force` to recompute a stage instead of using its cache. Ad-hoc
-routing:
-
-```bash
-python -m sf_flat_routes route --from Mission --to "Outer Sunset"
-python -m sf_flat_routes route --from "Inner Richmond" --to Downtown/Civic\ Center --mode bike
-```
-
-```
-Mission  ->  Outer Sunset   [walk]
-objective        miles  climb ft  loss ft  max %   >5% m   >8% m            vs shortest
-shortest          5.10      1130      955   59.9    2677    1303
-min_climb         6.22       333      158    9.2     211       1   +22% dist,   +797 ft climb
-grade_averse      6.38       349      174    7.0       3       0   +25% dist,   +781 ft climb
-balanced          6.20       345      170    7.0      29       0   +21% dist,   +785 ft climb
-```
-
-A full clean run takes about **4.5 minutes** on 4 cores and completes with no
-warnings at all: ~55 s to download and cache 725 MB of source data, ~1 m 40 s
-to build the street graph and sample 1.6 M elevation points, ~30 s for the
-routing analysis (10,080 routes), ~15 s to validate, and ~1 m 15 s to render
-the maps. Re-running any stage from cache is near-instant.
+For a domain of its own, set `SITE_DOMAIN` in `config.py` (the build then
+writes `site/CNAME` and uses the domain in those tags), rebuild with
+`map`, enter the domain under Settings → Pages, and point a CNAME at
+`broyojo.github.io`. Any other static host works the same way: upload
+`site/` and nothing else. The preview card is `site/preview.jpg`, a
+1200×630 JPEG; regenerate it and the README screenshots after a build
+with `uv run python tests/qa_screenshots.py`.
 
 ### Tests
 
 ```bash
-python -m pytest tests/ -q             # 150 tests
+uv run python -m pytest tests/ -q             # 155 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,
 additivity, exact directional symmetry), directional edge costs, the routing
 cost model, access-rule interpretation, the minimax pass algorithm, corridor
-scoring, payload quantisation and bundling, and hillshade/geometry helpers —
+scoring, payload quantisation and bundling, and hillshade/geometry helpers,
 plus integration tests that assert the model's invariants against the real
-processed data.
+processed data, including the underpass and bridge-approach fixes.
 
-`tests/test_webmap.py` goes further and drives the built map in headless
-Chromium, handing the JavaScript router the exact arc sequences Python chose.
-It asserts that the browser's metrics match Python's on an identical path,
-and that the route the browser finds for itself is never more expensive under
-its own cost model. It skips itself unless Playwright, a Chromium build and a
-built map are all present:
+`tests/test_webmap.py` and `tests/test_routepage.py` drive the built pages
+in headless Chromium. They assert that the browser's metrics match Python's
+on an identical path, that the route the browser finds for itself is never
+more expensive under its own cost model, that the frontier holds every
+weighted optimum Python finds, and that search, loops, calm streets and
+share links behave. They skip themselves unless Playwright, a Chromium
+build and built pages are all present:
 
 ```bash
-pip install -e ".[dev]" && playwright install chromium
-python -m sf_flat_routes map && python -m pytest tests/test_webmap.py -q
+uv run playwright install chromium
+uv run python -m sf_flat_routes map && uv run python -m pytest tests/test_webmap.py tests/test_routepage.py -q
 ```
+
+`tests/qa_loop_mode.py` and `tests/qa_map_cuts.py` are the upstream
+author's interactive QA scripts. Their coordinates were moved to Atlanta
+but they still carry paths from the machine they were written on and were
+not run for this port.
 
 ## Project structure
 
 ```
 sf_flat_routes/
-  config.py           all tunable parameters: CRS, weights, thresholds, modes
+  config.py           all tunable parameters: CRS, study box, analysis
+                      neighborhoods, weights, thresholds, modes, branding
   sources.py          dataset registry: URLs, dates, licences, limitations
   download.py         cached acquisition; Parquet row-group bbox pruning
-  network.py          street graph from Overture segments + connectors
-  elevation.py        DEM mosaic, sampling, smoothing, structure handling
+  network.py          street graph from Overture segments + connectors;
+                      crossings where the DEM is not the street
+  elevation.py        DEM mosaic, sampling, smoothing, structure, crossing
+                      and abutment handling
   metrics.py          per-directed-edge metrics: grades, gain, steep distance
   routing.py          cost model and scipy-backed shortest paths
-  neighborhoods.py    boundaries and representative access points
+  neighborhoods.py    boundaries, city limits and representative access points
   pairs.py            neighborhood-pair matrix and Pareto frontiers
   corridors.py        corridor importance scoring and merging
   passes.py           minimax passes, lowland basins, barriers
   validate.py         checks against known ground truth
   viz_static.py       publication maps (matplotlib + lidar hillshade)
   webgraph.py         packs the graph into a compressed browser payload
-  bikeways.py         SFMTA bikeway conflation and the bike comfort table
+  bikeways.py         bike facility conflation and the bike comfort table
   places.py           offline place index for the route finder, and the
                       hillshade base image
   viz_interactive.py  assembles the two self-contained web pages
@@ -627,106 +671,88 @@ sf_flat_routes/
   pipeline.py         stage orchestration
   __main__.py         CLI
   vendor/             Leaflet 1.9.4 (BSD-2-Clause), inlined into the map
-site/                 flattensf.com as a static site (built; deployed
+site/                 the route finder as a static site (built; deployed
                       to GitHub Pages by .github/workflows/pages.yml)
 notebooks/            exploration only; the analysis runs from the CLI
-tests/                150 tests
+tests/                the test suite and QA scripts
 data/raw/             cached source data (never modified)
 data/processed/       cached intermediate products
 outputs/              deliverables
 ```
 
 Raw data is never written to; every expensive product is cached and
-recomputed only with `--force`. Output is byte-reproducible: rebuilding the
-maps and reports from the same cached data produces identical files, so the
-repository does not churn on every run.
+recomputed only with `--force`.
 
 ## Other cities
 
-Nothing in the method is specific to San Francisco, but the code is
-written for one city and has no city switch yet. Overture covers the
-world, so the street network, places and addresses come for free; the
-rest is a handful of settings and two or three local datasets:
-
-- **Bounding box and projection** in [`config.py`](sf_flat_routes/config.py):
-  `SF_BBOX`, and `CRS_PROJECTED`, the UTM zone of the city's lidar
-  (Seattle is in the same zone as San Francisco, EPSG:26910).
-- **Elevation** in [`sources.py`](sf_flat_routes/sources.py): the USGS
-  3DEP 1 m project and tile names covering the city (`LIDAR_PROJECT`,
-  `LIDAR_TILES`). Bare-earth lidar matters; a 10 m or 30 m DEM blurs
-  street grades badly.
-- **City boundary and neighborhoods** (`NEIGHBORHOOD_URL`): any polygon
-  set works; it clips the network and seeds the analysis's access points.
-- **Bike facilities** (optional): the city's own bikeway layer, mapped onto
-  the facility codes in [`bikeways.py`](sf_flat_routes/bikeways.py). Without
-  it bike mode falls back to road class.
-- **Validation** ([`validate.py`](sf_flat_routes/validate.py)): the known
-  steep and flat streets are San Francisco's and need local replacements,
-  or the stage can be skipped.
-- **Branding and the default trip**: `PRODUCT_NAME`, `SITE_DOMAIN` and
-  `_DEFAULT_TRIP` in [`viz_interactive.py`](sf_flat_routes/viz_interactive.py).
-
-Then run the pipeline above; the route finder in `site/` is static and
-can be hosted anywhere.
+Nothing in the method is specific to a city, and this port is the worked
+example. The settings that changed are the table under *What changed in
+the port*: the bounding box and projection in `config.py`, the lidar
+project and tiles and the boundary, neighborhood and bikeway layers in
+`sources.py`, the facility codes in `bikeways.py`, the reference corridors
+in `validate.py`, and the branding, default trip and guided examples in
+`config.py` and `viz_interactive.py`. Then two things to look at before
+trusting the result: the steepest arterial blocks (bridges show up there
+first), and the basin threshold, which is a contour and not a height above
+the sea.
 
 ## Limitations
 
-Beyond the two dataset substitutions above:
-
-- **Elevation is the ground, not the road surface.** Bridges and tunnels are
-  interpolated; a handful of piers over water are solved from neighbours.
+- **Elevation is the ground of 2018, not the road surface of today.**
+  Bridges and tunnels are interpolated; streets under decks are bridged
+  across. Anything built or regraded since the survey is measured as it
+  was: parts of the BeltLine, Westside Park, new subdivisions.
+- **Some artefacts remain.** About 120 of 67,000 rideable blocks still
+  carry a pitch of 30% or more, mostly service roads and paths. They
+  inflate the *steepest* figure of any route that crosses one and make the
+  flat end of the slider avoid it. The climbing totals are much less
+  sensitive.
 - **Travel is on street centrelines.** Pedestrian distances are block-scale,
-  not door-to-door, and sidewalk-level detail is deliberately unused.
-- **Maximum gradient on short edges is unreliable.** Over a 5 m stub a single
-  decimetre of artefact reads as 20%; the worst real case found was a 5 m
-  connector at Market and 5th reporting 41%. Edges under 15 m are flagged and
-  excluded from maximum-gradient tests, which fall back to average gradient.
-  41,330 of 87,776 edges are long enough to carry a reliable maximum.
-- **One access point per neighborhood.** Large or awkward neighborhoods
-  (Bayview, Lakeshore, the Presidio) are served worse than compact ones.
+  not door-to-door, and nothing here knows whether a street has a sidewalk,
+  which in parts of Atlanta it does not.
+- **City limits only.** See above. The pair analysis feels this at the
+  corners of the city, where the only way in or out that stays inside the
+  limits can be a long way round.
+- **Maximum gradient on short edges is unreliable.** Edges under 15 m are
+  flagged and excluded from maximum-gradient tests, which fall back to
+  average gradient. 73,552 of 116,014 edges are long enough to carry a
+  reliable maximum.
+- **36 of 248 neighborhoods, one access point each.** The headline averages
+  are over long trips (7.4 miles on average). They say what the terrain
+  allows across the city, not what a typical errand looks like.
 - **The route finder counts climbing, not steepness.** Its two axes are
-  distance and total feet climbed, so 230 ft at 25% and 250 ft at 13% look
-  almost the same. From Market & Taylor to the top of Nob Hill, straight up
-  Taylor (0.48 mi, 229 ft, 25% at worst) beats Polk and California (1.39 mi,
-  251 ft, 13% at worst) on both axes, so the gentler ride never appears on
-  the slider. A steepness-weighted climbing cost is the planned fix.
+  distance and total feet climbed, so a short wall and a long gentle rise
+  of the same height look alike. A steepness-weighted climbing cost is
+  upstream's planned fix.
 - **No traffic, signals, surface quality or safety.** The bicycle comfort
-  weights are a table over road class and SFMTA facility class, not a
-  level-of-traffic-stress model: a painted lane on a six-lane arterial
-  scores the same as one on a two-lane street.
-- **Gradients are attenuated at the extremes.** Published "steepest street"
-  figures are measured over the single steepest pitch, sometimes only 15–20 m
-  long, and the smoothing chain costs roughly eight percentage points there.
-  Bradford Street shows the whole chain: 41.4% sampled raw at 5 m against a
-  published 41%, 36.8% raw at 10 m, 36.9% with the 50 m window applied within
-  the edge, and 33.1% as the pipeline computes it (smoothed across whole
-  segments and reconciled at intersections). The trade is deliberate: with
-  less smoothing, lidar artefacts pushed 22nd Street and Baden Street to the
-  60% plausibility ceiling. For a project about *flat* routes, clipping the
-  peak of a 41% wall is a much cheaper error than inventing gradient on flat
-  ground.
+  weights are a table over road class and facility type, not a
+  level-of-traffic-stress model, and the facility inventory is regional
+  and coarse.
+- **Gradients are attenuated at the extremes.** The smoothing chain costs
+  several percentage points on the very shortest steep pitches (upstream
+  measured about eight on San Francisco's 41% Bradford Street). For a
+  project about *flat* routes, clipping the peak of a wall is a much
+  cheaper error than inventing gradient on flat ground.
 - **The place search is only as good as its sources.** Intersections and
-  addresses are solid; Overture's places feed puts some well-known names in
-  the wrong place, and the corroboration rules in `places.py` remove the
-  worst of it rather than all of it. Check the pin.
-- **The web pages quantise the graph** to keep the file small:
-  lengths and steep distances to 5 cm, climbing to 1 cm, gradients to 0.01%.
-  Route totals therefore drift from the Python figures by a few tens of
-  centimetres over a long route, and where two routes tie on cost the browser
-  may pick the other one. `tests/test_webmap.py` asserts both that the
-  browser's metrics match Python's on an identical path and that its own
-  route is never more expensive.
-- **Treasure Island / Yerba Buena Island** are excluded from pair routing:
-  they are part of San Francisco but have no pedestrian access across the
-  western span of the Bay Bridge.
+  addresses are solid; Overture's places feed puts some names in the wrong
+  place, and the corroboration rules in `places.py` remove the worst of it
+  rather than all of it. Check the pin.
+- **The web pages quantise the graph** to keep the file small: lengths and
+  steep distances to 5 cm, climbing to 1 cm, gradients to 0.01%. Route
+  totals therefore drift from the Python figures by a few tens of
+  centimetres over a long route, and where two routes tie on cost the
+  browser may pick the other one.
 
 ## Licence and attribution
 
-Analysis code in this repository is available under the MIT licence. The data
-it consumes is not: street geometry is **© OpenStreetMap contributors,
-ODbL 1.0** (via Overture Maps), and any redistribution of derived street
-geometry — including `outputs/flat_corridors.geojson`,
-`data/processed/edges_*.parquet` and the interactive map — carries ODbL
-share-alike obligations. USGS 3DEP elevation is public domain. Leaflet is
+The method, the code and the design are Drew Edwards's
+[flattensf](https://github.com/almostimplemented/flattensf); this
+repository is a port of it. Analysis code is available under the MIT
+licence. The data it consumes is not: street geometry is **© OpenStreetMap
+contributors, ODbL 1.0** (via Overture Maps), and any redistribution of
+derived street geometry, including `outputs/flat_corridors.geojson`,
+`data/processed/edges_*.parquet` and the interactive maps, carries ODbL
+share-alike obligations. USGS 3DEP elevation is public domain. The bike
+facility inventory is © Atlanta Regional Commission, CC BY 4.0. Leaflet is
 bundled under BSD-2-Clause; see
 [`sf_flat_routes/vendor/README.md`](sf_flat_routes/vendor/README.md).

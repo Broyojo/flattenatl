@@ -1,6 +1,6 @@
 /* The warped city.
  *
- * Geography answers "how far", and in San Francisco that is the wrong
+ * Geography answers "how far", and in a hilly city that is the wrong
  * question. Here the city is redrawn so that distance on the page means
  * *climbing cost*: the equivalent-metre cost the router charges, in which a
  * metre of ascent counts as some multiple of a metre of walking. Places
@@ -31,7 +31,9 @@ const Warp = {
 
   /* ----------------------------------------------------- anchor selection */
   /* Neighborhood access points plus a lattice of routable intersections. */
-  anchors(app, mode, cellM = 1000) {
+  /* 1.5 km cells: Atlanta is three times San Francisco's area, and the cost
+   * matrix and the layout both grow with the square of the anchor count. */
+  anchors(app, mode, cellM = 1500) {
     const g = app.graph, bit = g.modeBit(mode);
     const ok = i => (g.nodeFlags[i] & bit) !== 0;
     const nodes = new Set();
