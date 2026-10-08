@@ -71,6 +71,48 @@ CATEGORY_GROUPS = {
 }
 _GROUP_OF = {c: g for g, cs in CATEGORY_GROUPS.items() for c in cs}
 
+#: The feed has over a thousand categories and the lists above name about a
+#: hundred, which left out every restaurant filed under its cuisine, every
+#: clothing shop, every gym, and one of Atlanta's Whole Foods (an
+#: "organic_grocery_store"). These catch the rest of the places people
+#: actually walk or ride to, by the words in the category. First match wins;
+#: offices, agencies and trades are still left out.
+_WORD_GROUPS = (
+    ("salon", {"salon", "barber", "spa", "spas", "nail", "tattoo"}),
+    ("food", {"restaurant", "cafe", "coffee", "bakery", "bar", "pub", "brewery",
+              "diner", "pizza", "dessert", "juice", "sandwich", "deli", "donut",
+              "donuts", "bistro", "steakhouse", "winery", "distillery", "lounge",
+              "bagel", "gastropub", "creperie", "smoothie", "food", "bars"}),
+    ("gym", {"gym", "gyms", "fitness", "yoga", "pilates", "climbing", "boxing",
+             "crossfit", "cycling"}),
+    ("shop", {"store", "shop", "boutique", "shopping", "grocery", "supermarket",
+              "market", "pharmacy", "mall", "outlet", "florist"}),
+    ("bank", {"bank", "banks"}),
+    ("clinic", {"clinic", "hospital", "urgent"}),
+)
+_EXACT_GROUPS = {
+    "music_venue": "venue", "venue_and_event_space": "venue", "art_gallery": "venue",
+    "arts_and_entertainment": "venue", "night_club": "venue", "dance_club": "venue",
+    "comedy_club": "venue", "jazz_and_blues": "venue", "bowling_alley": "venue",
+    "arcade": "venue", "topic_concert_venue": "venue", "karaoke": "venue",
+    "medical_center": "clinic", "accommodation": "lodging",
+    "apartments": "apartments", "condominium": "apartments",
+}
+
+
+def _group_of(category) -> str | None:
+    """The display kind for an Overture category, or None to leave it out."""
+    if not isinstance(category, str):
+        return None
+    g = _GROUP_OF.get(category) or _EXACT_GROUPS.get(category)
+    if g:
+        return g
+    words = set(category.split("_"))
+    for group, vocab in _WORD_GROUPS:
+        if words & vocab:
+            return group
+    return "landmark" if _KEEP_RE.search(category) else None
+
 #: Overture base-theme (OpenStreetMap) classes kept, with the kind shown in
 #: the search list. Keyed by (type, class).
 BASE_CLASSES = {
@@ -225,6 +267,95 @@ def _prune_variants(df: pd.DataFrame, radius_m: float = 500.0) -> pd.DataFrame:
     return out
 
 
+#: Kinds of place that come in branches. Upstream kept one record per name,
+#: which is right for a landmark (the feed drops stray copies of a famous
+#: name all over town, and only the best-supported one is real) and wrong
+#: for a grocery: Atlanta has four Whole Foods inside the city, a dozen
+#: Krogers and forty Starbucks, and "the" one is whichever is nearest.
+BRANCH_GROUPS = frozenset({"food", "shop", "lodging", "civic", "gym", "salon",
+                           "bank", "clinic"})
+#: Two records of one name closer than this are the same branch.
+BRANCH_MIN_M = 200.0
+
+
+def _dedupe_branches(df: pd.DataFrame) -> pd.DataFrame:
+    """One record per (name, kind), or one per branch for the kinds above.
+
+    ``df`` must already be sorted best first; the best record of each
+    branch (or of the name) is the one kept.
+    """
+    keep = np.zeros(len(df), dtype=bool)
+    lon = df["lon"].to_numpy(); lat = df["lat"].to_numpy()
+    for (_name, group), idx in df.groupby(["name", "group"], sort=False).indices.items():
+        if group not in BRANCH_GROUPS or len(idx) == 1:
+            keep[idx[0]] = True
+            continue
+        kept: list[int] = []
+        for i in idx:
+            if all(np.hypot((lon[i] - lon[j]) * LON_M_PER_DEG,
+                            (lat[i] - lat[j]) * LAT_M_PER_DEG) >= BRANCH_MIN_M
+                   for j in kept):
+                kept.append(i)
+        keep[kept] = True
+    return df[keep].reset_index(drop=True)
+
+
+def _neighborhood_of(lon, lat) -> tuple[list[str], np.ndarray]:
+    """Neighborhood names and, per point, an index into them (0 = none).
+
+    Shown beside a search result, so that four Whole Foods are "Midtown",
+    "Old Fourth Ward", "Buckhead" and "Paces" rather than four of the same.
+    """
+    import geopandas as gpd
+
+    from .config import CRS_GEOGRAPHIC
+    try:
+        from .neighborhoods import load_neighborhoods
+        nb = load_neighborhoods()[["neighborhood", "geometry"]].to_crs(CRS_GEOGRAPHIC)
+    except Exception as exc:
+        log.warning("neighborhoods unavailable (%s); places carry no locality", exc)
+        return [], np.zeros(len(lon), dtype=int)
+    pts = gpd.GeoDataFrame({"i": np.arange(len(lon))},
+                           geometry=gpd.points_from_xy(lon, lat), crs=CRS_GEOGRAPHIC)
+    j = gpd.sjoin(pts, nb, how="left", predicate="within").drop_duplicates("i")
+    names = sorted(nb["neighborhood"].unique())
+    pos = {n: k + 1 for k, n in enumerate(names)}
+    return names, j.sort_values("i")["neighborhood"].map(pos).fillna(0).astype(int).to_numpy()
+
+
+def _street_of(lon, lat, wanted: np.ndarray, max_m: float = 120.0) -> tuple[list[str], np.ndarray]:
+    """The named street nearest each wanted point (0 = none within reach).
+
+    Two branches of a chain can share a neighborhood (Midtown has a Whole
+    Foods on 14th Street and another on Ponce de Leon), and the street is
+    what tells them apart. Only computed where asked for, which is the
+    places whose name recurs.
+    """
+    import geopandas as gpd
+    import shapely
+    from pyproj import Transformer
+
+    from .config import CRS_GEOGRAPHIC, CRS_PROJECTED
+    out = np.zeros(len(lon), dtype=int)
+    path = PROCESSED_DIR / "edges_metrics.parquet"
+    idx = np.flatnonzero(wanted)
+    if not path.exists() or not len(idx):
+        return [], out
+    edges = gpd.read_parquet(path, columns=["name", "cls", "geometry"])
+    edges = edges[edges["name"].notna() & ~edges["cls"].isin(["footway", "path", "steps", "cycleway"])]
+    tr = Transformer.from_crs(CRS_GEOGRAPHIC, CRS_PROJECTED, always_xy=True)
+    x, y = tr.transform(np.asarray(lon)[idx], np.asarray(lat)[idx])
+    pts = shapely.points(x, y)
+    tree = shapely.STRtree(edges.geometry.values)
+    near = tree.nearest(pts)
+    close = shapely.distance(pts, edges.geometry.values[near]) <= max_m
+    found = edges["name"].to_numpy()[near]
+    names = sorted(set(found[close]))
+    pos = {n: k + 1 for k, n in enumerate(names)}
+    out[idx[close]] = [pos[n] for n in found[close]]
+    return names, out
+
+
 def _in_city(lon, lat) -> np.ndarray:
     """Which points fall inside the city limits (plus the network's margin).
 
@@ -299,7 +430,7 @@ def build_places() -> dict:
     geom = shapely.from_wkb(t["geometry"].values)
     lon = np.array([g.x for g in geom]); lat = np.array([g.y for g in geom])
 
-    group = cats.map(lambda c: (_GROUP_OF.get(c) or ("landmark" if _KEEP_RE.search(c) else None)) if isinstance(c, str) else None)
+    group = cats.map(_group_of)
     support = _support(names.fillna(""), lon, lat, names.fillna(""), lon, lat)
     keep = names.notna() & (names.str.len() >= 3) & group.notna() & (conf >= 0.6)
     # a famous place with no useful category still deserves a slot, and so
@@ -310,9 +441,8 @@ def build_places() -> dict:
     df = pd.DataFrame({"name": names, "group": group.fillna("landmark"),
                        "conf": conf, "lon": lon, "lat": lat, "support": support})[keep]
     df = df[_in_city(df["lon"], df["lat"])]
-    df = (df.sort_values(["support", "conf"], ascending=False)
-            .drop_duplicates(["name", "group"])
-            .reset_index(drop=True))
+    df = _dedupe_branches(df.sort_values(["support", "conf"], ascending=False)
+                            .reset_index(drop=True))
     # the mapped feature wins over any POI record of the same name, or of a
     # trailing part of it ('Dolores Park' for 'Mission Dolores Park')
     mapped = set(_core(n) for n in base["name"])
@@ -333,7 +463,10 @@ def build_places() -> dict:
     df = pd.concat([base[["name", "group", "lon", "lat"]], df[["name", "group", "lon", "lat"]]],
                    ignore_index=True)
     df = df[_in_city(df["lon"], df["lat"])]
-    df = df.sort_values(["name"]).reset_index(drop=True)
+    df = df.sort_values(["name", "lat", "lon"]).reset_index(drop=True)
+    hoods, hood = _neighborhood_of(df["lon"].to_numpy(), df["lat"].to_numpy())
+    streets, street = _street_of(df["lon"].to_numpy(), df["lat"].to_numpy(),
+                                 df["name"].duplicated(keep=False).to_numpy())
     log.info("places: %d kept of %d POI records plus %d mapped features (%s)",
              len(df) - len(base), len(t), len(base),
              ", ".join(f"{g} {n}" for g, n in df["group"].value_counts().head(12).items()))
@@ -344,6 +477,12 @@ def build_places() -> dict:
         "groups": groups,
         "lon": np.round(df["lon"].to_numpy(), 5).tolist(),
         "lat": np.round(df["lat"].to_numpy(), 5).tolist(),
+        # neighborhood per place, as an index into ``hoods`` plus one
+        "hoods": hoods,
+        "hood": hood.tolist(),
+        # and, where a name recurs, the street the place is on
+        "streets": streets,
+        "street": street.tolist(),
     }
 
 

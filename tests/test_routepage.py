@@ -44,7 +44,9 @@ pytestmark = [
 _SEARCHES = ["10th & peachtree", "675 ponce de leon", "piedmont park", "ponce city market",
              "boulevard and north ave", "five points", "grant park", "arts center",
              "peachtree st ne & 10th st ne", "10th street northeast and peachtree street northeast",
-             "moreland ave & euclid ave", "ponce de leon ave"]
+             "moreland ave & euclid ave", "ponce de leon ave",
+             "650 Ponce De Leon Ave NE, Atlanta, GA 30308", "22 14th St NW",
+             "675 Ponce de Leon Ave NE Atlanta GA", "600 mlk jr dr sw", "whole foods"]
 
 _SCRIPT = """(queries) => {
     const fam = App.family, g = App.graph;
@@ -56,6 +58,9 @@ _SCRIPT = """(queries) => {
     }));
     const search = {};
     for (const q of queries) search[q] = App.index.search(q).map(r => [r.name, r.kind]);
+    // Georgia Tech is nearer the 14th Street Whole Foods than any other
+    const gt = [-84.39881, 33.77609];
+    const nearest = App.index.search('whole foods', 8, gt).map(r => [r.name, r.where]);
     const sl = document.getElementById('sl');
     sl.value = 0; sl.dispatchEvent(new Event('input'));
     const atZero = App.shown.id;
@@ -65,7 +70,7 @@ _SCRIPT = """(queries) => {
     const half = App.shown.id;
     return {
         from: App.state.from, to: App.state.to, members, alphas,
-        search, atZero, atOne, half, hash: location.hash,
+        search, nearest, atZero, atOne, half, hash: location.hash,
         places: App.index.places.length, intersections: App.index.intersections.length,
         hasAddresses: !!App.index.addr,
         frontier: { solutions: App._search.solutions.length, labels: App._search.labels,
@@ -287,6 +292,28 @@ def test_search_finds_intersections_addresses_and_places(page_results):
     assert "Moreland Avenue Northeast" in s["moreland ave & euclid ave"][0][0]
     assert any(k == "intersection" and "Ponce de Leon Avenue" in n
                for n, k in s["ponce de leon ave"])
+
+
+def test_addresses_are_found_the_way_people_type_them(page_results):
+    out, _ = page_results
+    s = out["search"]
+    # pasted from somewhere else, with the city, state and zip on the end
+    assert s["650 Ponce De Leon Ave NE, Atlanta, GA 30308"][0] == \
+        ["650 Ponce de Leon Avenue NE", "address"]
+    assert s["675 Ponce de Leon Ave NE Atlanta GA"][0] == ["675 Ponce de Leon Avenue NE", "address"]
+    # a house number followed by a numbered street
+    assert s["22 14th St NW"][0] == ["22 14th Street NW", "address"]
+    # the abbreviation everybody uses
+    assert "Martin Luther King Jr Drive SW" in s["600 mlk jr dr sw"][0][0]
+
+
+def test_every_branch_of_a_chain_is_offered_nearest_first(page_results):
+    out, _ = page_results
+    assert sum(n == "Whole Foods Market" for n, _ in out["search"]["whole foods"]) == 4
+    names, wheres = zip(*out["nearest"])
+    assert names[:4] == ("Whole Foods Market",) * 4
+    assert len(set(wheres[:4])) == 4, wheres          # each says where it is
+    assert "14th St NW" in wheres[0], wheres          # nearest to Georgia Tech
 
 
 def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):

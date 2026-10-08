@@ -72,16 +72,24 @@ is ticked; near the BeltLine they usually win.
 ![The route finder](outputs/screenshot_route_finder.png)
 
 Place search is **offline**: street intersections ("10th & Peachtree"),
-addresses ("675 Ponce de Leon") and about 7,200 parks, landmarks, stations,
-schools, shops and cafes are built into the page from the street graph and
-Overture's places, addresses and base themes. No geocoding API, so no key
+addresses ("675 Ponce de Leon") and about 17,000 parks, landmarks, stations,
+schools, restaurants, shops, gyms and other everyday places are built into
+the page from the street graph and Overture's places, addresses and base
+themes. No geocoding API, so no key
 to leak and nothing to pay for. You can also click the map, or drag either
 pin. "Copy link" gives a URL that reopens the exact trip.
 
 Atlanta street names come with a quadrant, and the search treats
 "10th St NE", "10th Street Northeast" and "10th" as the same street. Where
 a name is shared (Ponce de Leon Avenue, Place, Court, Manor), the street
-that actually has the house number comes first.
+that actually has the house number comes first. An address can be pasted
+whole ("650 Ponce De Leon Ave NE, Atlanta, GA 30308"), may be on a numbered
+street ("22 14th St NW"), and "MLK" finds Martin Luther King Jr Drive.
+
+A chain is listed once per branch, each with its street and neighborhood,
+nearest first: nearest to the other end of the trip if there is one,
+otherwise to the middle of the map. There are four Whole Foods inside the
+city, and the one you mean is rarely the one in Buckhead.
 
 **Routes stay inside the Atlanta city limits.** The limits are ragged, and
 they leave out places many people think of as Atlanta: Decatur, most of
@@ -90,7 +98,7 @@ A click out there snaps to the nearest street inside the city, and a route
 cannot leave the city even where the flat way round would.
 
 The site is static: [`site/`](site/) holds the page, its CSS and JS, the
-whole street graph as one 5.8 MB gzipped file and the hillshade as a PNG,
+whole street graph as one 6.0 MB gzipped file and the hillshade as a PNG,
 and GitHub Pages serves it as is. After the first load every route is
 solved locally. The same page is also written as one self-contained 8 MB
 file,
@@ -237,10 +245,19 @@ San Francisco is not:
    from the city's own range: the hillshade tint, the terrain colours of
    the static map, the basin threshold.
 
+The place search changed more than the rest of the page. Upstream kept one
+record per name from about a hundred of the feed's categories, which in
+Atlanta left a single Whole Foods, Kroger and Starbucks for the whole city
+and no restaurant filed under its cuisine. The index now keeps every branch
+of a shop, restaurant, gym, bank, salon or clinic, groups the feed's
+thousand categories by the words in them, and holds 17,000 places instead
+of 7,000.
+
 Smaller changes: place and address search is clipped to the city limits
 rather than the bounding box (most of the box is somewhere else); address
 streets are title-cased with their quadrant ("Ponce de Leon Avenue NE");
-the address search ranks the street that has the number first; the
+the address search ranks the street that has the number first and reads
+pasted addresses and numbered streets; the
 explorer's default trip and guided examples come from the build rather
 than being written into the JavaScript; the route finder labels only the
 larger neighborhoods; the warp uses a 1.5 km lattice; there is no CNAME
@@ -424,8 +441,8 @@ Both pages ship the graph, not a set of answers. The packing is in
 quantised into typed arrays, concatenated into one buffer and gzipped. The
 browser inflates it with `DecompressionStream` and takes `TypedArray` views
 straight onto the result, with no JSON number parsing. For the route
-finder, 13.2 MB of arrays, geometry, places and addresses compress to
-5.8 MB.
+finder, 13.8 MB of arrays, geometry, places and addresses compress to
+6.0 MB.
 
 Routing is a Dijkstra over a CSR adjacency with a flat binary heap and a
 visit-stamp array, so nothing is reallocated between searches. Over ninety
@@ -452,9 +469,11 @@ Place search runs on an index packed into the page: 8,752 intersections
 are derived in the browser from the graph's own street names; parks,
 schools, stations and bridges come from Overture's base theme (mapped
 OpenStreetMap outlines, which are reliable); landmarks, shops and cafes
-come from Overture's places feed, which is not, so a POI record is kept
-only where neighbouring records corroborate it and is dropped when a
-mapped feature already carries its name
+come from Overture's places feed, which is not, so a landmark is kept
+once, at its best-supported record, and dropped when a mapped feature
+already carries its name. Shops, restaurants, gyms and the like are kept
+once per branch (records of one name more than 200 m apart), each tagged
+with its neighborhood and, where the name recurs, its street
 ([`sf_flat_routes/places.py`](sf_flat_routes/places.py)). Addresses are
 143,000 (street, number) points in 10 bytes each.
 
@@ -610,7 +629,7 @@ with `uv run python tests/qa_screenshots.py`.
 ### Tests
 
 ```bash
-uv run python -m pytest tests/ -q             # 155 tests
+uv run python -m pytest tests/ -q             # 160 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,

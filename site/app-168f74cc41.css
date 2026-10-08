@@ -65,8 +65,10 @@ h1 small{font-weight:400;color:var(--muted);margin-left:6px;font-size:12px}
 .field input::placeholder{color:var(--muted);opacity:.8}
 .field .pin{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:10px;height:10px;border-radius:50%;background:var(--route);box-shadow:0 0 0 2px var(--card)}
 .field .pin.to{background:var(--ink)}
-.suggest{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);z-index:1200;max-height:260px;overflow:auto;padding:4px 0;margin:0;list-style:none}
-.suggest li{padding:7px 10px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.suggest{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);z-index:1200;max-height:320px;overflow:auto;padding:4px 0;margin:0;list-style:none}
+.suggest li{padding:7px 10px;cursor:pointer;display:flex;flex-wrap:wrap;justify-content:space-between;column-gap:10px;row-gap:1px;align-items:baseline}
+.suggest .n{flex:1 1 0}
+.suggest .w{flex:0 0 100%;font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .suggest li[aria-selected="true"],.suggest li:hover{background:var(--field)}
 .suggest .k{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;flex:none}
 .suggest .n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -84,7 +84,7 @@ def index():
 @needs_base
 def test_place_index_is_compact_and_inside_the_city(index):
     n = len(index["names"])
-    assert 5000 < n < 20000
+    assert 10000 < n < 25000
     assert len(index["group"]) == n == len(index["lon"]) == len(index["lat"])
     assert max(index["group"]) < len(index["groups"])
     assert min(index["lon"]) >= CITY_BBOX[0] and max(index["lon"]) <= CITY_BBOX[1]
@@ -94,7 +94,52 @@ def test_place_index_is_compact_and_inside_the_city(index):
     near_decatur = [(lo, la) for lo, la in zip(index["lon"], index["lat"])
                     if abs(lo + 84.2963) < 0.004 and abs(la - 33.7748) < 0.004]
     assert not near_decatur
-    assert len(set(index["names"])) == n or len(set(zip(index["names"], index["group"]))) == n
+    # a name may recur, once per branch, but never twice at one spot
+    spots = set(zip(index["names"], index["group"], index["lon"], index["lat"]))
+    assert len(spots) == n
+    assert len(index["hood"]) == n == len(index["street"])
+    assert max(index["hood"]) <= len(index["hoods"]) and max(index["street"]) <= len(index["streets"])
+
+
+@needs_places
+@needs_base
+def test_a_chain_keeps_every_branch_and_says_where_each_is(index):
+    """Atlanta has four Whole Foods inside the city. One record per name,
+    which is what upstream kept, left a single store on West Paces Ferry."""
+    rows = [(index["lon"][i], index["lat"][i],
+             index["streets"][index["street"][i] - 1] if index["street"][i] else "",
+             index["hoods"][index["hood"][i] - 1] if index["hood"][i] else "")
+            for i, n in enumerate(index["names"]) if n == "Whole Foods Market"]
+    assert len(rows) == 4, rows
+    # the store on 14th Street and the one on Ponce are both in Midtown: the
+    # street is what tells them apart
+    assert len({(street, hood) for _, _, street, hood in rows}) == 4
+    assert any("14th Street" in street for _, _, street, _ in rows)
+    for name, at_least in (("Kroger", 5), ("Publix", 5), ("Starbucks", 20)):
+        assert sum(n == name for n in index["names"]) >= at_least, name
+
+
+def test_branches_are_kept_for_shops_and_not_for_landmarks():
+    df = pd.DataFrame({
+        "name": ["Grocer", "Grocer", "Grocer", "Old Mill", "Old Mill"],
+        "group": ["shop", "shop", "shop", "landmark", "landmark"],
+        # two shops 50 m apart are one branch; the third is 3 km away
+        "lon": [-84.3800, -84.3805, -84.4100, -84.3800, -84.4100],
+        "lat": [33.7800, 33.7800, 33.7800, 33.7700, 33.7700],
+    })
+    kept = places._dedupe_branches(df)
+    assert list(kept["name"]) == ["Grocer", "Grocer", "Old Mill"]
+    assert list(kept["lon"]) == [-84.3800, -84.4100, -84.3800]
+
+
+def test_categories_are_grouped_by_their_words():
+    g = places._group_of
+    assert g("organic_grocery_store") == "shop" and g("clothing_store") == "shop"
+    assert g("thai_restaurant") == "food" and g("sports_bar") == "food"
+    assert g("coffee_shop") == "food"            # the listed categories still win
+    assert g("barber") == "salon"                # not a bar
+    assert g("gym") == "gym" and g("music_venue") == "venue"
+    assert g("lawyer") is None and g("real_estate_agent") is None and g(None) is None
 
 
 @needs_places

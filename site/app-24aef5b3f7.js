@@ -1129,9 +1129,15 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.places = [];
       if (DATA.manifest.strings.places) {
         const p = JSON.parse(bundle.text("places"));
+        // a chain has a record per branch: the neighborhood tells them apart
+        const count = new Map();
+        for (const n of p.names) count.set(n, (count.get(n) || 0) + 1);
         for (let i = 0; i < p.names.length; i++) {
+          const hood = (p.hood && p.hood[i]) ? p.hoods[p.hood[i] - 1] : "";
+          const street = (p.street && p.street[i]) ? shortStreet(p.streets[p.street[i] - 1]) : "";
           this.places.push({ name: p.names[i], nn: norm(p.names[i]), kind: p.groups[p.group[i]],
-            lon: p.lon[i], lat: p.lat[i] });
+            lon: p.lon[i], lat: p.lat[i], multi: count.get(p.names[i]) > 1,
+            where: [street, hood].filter(Boolean).join(" · "), at: street || hood });
         }
       }
       this.addr = null;
@@ -1195,15 +1201,34 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       return g.nodeLat(node).toFixed(4) + ", " + g.nodeLon(node).toFixed(4);
     }
 
-    search(raw, limit = 8) {
+    /* `near` is [lon, lat]: among results that are otherwise equal (the
+     * branches of a chain), the closest to it comes first. */
+    search(raw, limit = 8, near = null, literal = false) {
+      // what people type for the long names: search both spellings, so
+      // "mlk" finds the drive and the places that are themselves called MLK
+      const full = raw.replace(/\bmlk\b/gi, "martin luther king").replace(/\brda\b/gi, "ralph david abernathy");
+      if (!literal && full !== raw) {
+        const seen = new Set(), res = [];
+        for (const r of this.search(full, limit, near, true).concat(this.search(raw, limit, near, true))) {
+          const k = r.kind + "|" + r.name + "|" + r.lon + "|" + r.lat;
+          if (!seen.has(k)) { seen.add(k); res.push(r); }
+        }
+        return res.sort((a, b) => a.score - b.score || a.rank - b.rank).slice(0, limit);
+      }
       const q = norm(raw);
       if (!q) return [];
       const toks = q.split(" ");
       const qq = q.replace(/ /g, "");
       const out = [];
 
-      // "675 Ponce de Leon" -- a street address
-      const am = /^(\d+)\s+(\D.*)$/.exec(q);
+      // "675 Ponce de Leon" -- a street address. A pasted one arrives as
+      // "650 Ponce De Leon Ave NE, Atlanta, GA 30308": the street is what
+      // comes before the first comma, less any unit, city, state and zip.
+      // The street may itself start with a number ("22 14th St NW").
+      const first = norm(raw.split(",")[0]).replace(/ (apt|unit|suite|ste|no) \S+$/, "");
+      const street = first.replace(/( (atlanta|atl|ga|georgia|usa|30\d{3}))+$/, "");
+      // ("55 Georgia" is Georgia Avenue half typed, not a number in Georgia)
+      const am = /^(\d+)\s+(.+)$/.exec(street) || /^(\d+)\s+(.+)$/.exec(first);
       if (am && this.addr) {
         const want = +am[1], sq = am[2], stoks = sq.split(" ");
         const hits = [];
@@ -1251,18 +1276,26 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
 
       // places
       // mapped features and landmarks first, then everyday places
-      const KIND_RANK = { landmark: 1, transit: 1, civic: 1, shop: 2, food: 2, lodging: 2 };
+      const KIND_RANK = { landmark: 1, transit: 1, civic: 1, shop: 2, food: 2, lodging: 2,
+        venue: 2, gym: 2, clinic: 2, bank: 3, salon: 3, apartments: 3 };
       for (const p of this.places) {
         let sc = matchScore(p.nn, q, toks);
         if (sc < 0 && qq.length >= 4 && p.nn.replace(/ /g, "").startsWith(qq)) sc = 2;
         if (sc >= 0) out.push({ score: sc, rank: 1 + (KIND_RANK[p.kind] || 0), ...p });
       }
 
-      out.sort((a, b) => a.score - b.score || a.rank - b.rank || a.name.length - b.name.length);
-      // one intersection per pair of streets is already guaranteed; dedupe places by name
+      const far = (r) => {
+        if (!near) return 0;
+        const dx = (r.lon - near[0]) * Math.cos(near[1] * Math.PI / 180), dy = r.lat - near[1];
+        return dx * dx + dy * dy;
+      };
+      out.sort((a, b) => a.score - b.score || a.rank - b.rank || a.name.length - b.name.length
+        || far(a) - far(b));
+      // one intersection per pair of streets is already guaranteed; a place
+      // may recur under one name, once per branch
       const seen = new Set(), res = [];
       for (const r of out) {
-        const k = r.kind + "|" + r.name;
+        const k = r.kind + "|" + r.name + "|" + r.lon + "|" + r.lat;
         if (seen.has(k)) continue;
         seen.add(k); res.push(r);
         if (res.length >= limit) break;
@@ -1489,6 +1522,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
             li.innerHTML = "<span class='n'></span><span class='k'></span>";
             li.firstChild.textContent = it.name;
             li.lastChild.textContent = it.kind;
+            if (it.where) {          // street and neighborhood, on a line of their own
+              const w = document.createElement("span");
+              w.className = "w"; w.textContent = it.where; li.appendChild(w);
+            }
             li.addEventListener("mousedown", (e) => { e.preventDefault(); pick(i); });
             list.appendChild(li);
           });
@@ -1496,8 +1533,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         };
         const pick = (i) => {
           const it = items[i]; if (!it) return;
+          // a branch of a chain is named with where it is
+          const label = it.multi && it.at ? it.name + ", " + it.at : it.name;
           const pt = it.node !== undefined ? { lon: it.lon, lat: it.lat, node: it.node, label: it.name }
-            : this.pointAt(it.lon, it.lat, it.name);
+            : this.pointAt(it.lon, it.lat, label);
           items = []; render();
           this.setPoint(which, pt, true);
           // done typing here: on to the other field if it is still empty,
@@ -1513,7 +1552,11 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         });
         input.addEventListener("input", () => {
           input.dataset.set = "";
-          items = this.index.search(input.value); sel = items.length ? 0 : -1; render();
+          // nearest first: to the other end of the trip if there is one,
+          // otherwise to the middle of what the map is showing
+          const o = this.state[which === "from" ? "to" : "from"], c = this.map.getCenter();
+          items = this.index.search(input.value, 8, o ? [o.lon, o.lat] : [c.lng, c.lat]);
+          sel = items.length ? 0 : -1; render();
         });
         input.addEventListener("keydown", (e) => {
           if (e.key === "ArrowDown" && items.length) { sel = (sel + 1) % items.length; render(); e.preventDefault(); }
