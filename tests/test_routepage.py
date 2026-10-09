@@ -645,3 +645,98 @@ def test_the_site_loads_its_graph_over_http(served_site):
     assert any(re.match(r"app-[0-9a-f]{10}\.js$", r) for r in local), local
     for name in local + [".nojekyll", out["url"], out["hillshade"], out["cameras"]]:
         assert (SITE_INDEX.parent / name).exists(), name
+
+
+# ------------------------------------------------------------- follow me
+_LOC = """() => { const l = App.loc, m = l.marker, cone = m && m.getElement().querySelector('.me-cone');
+    const pt = m ? App.map.latLngToContainerPoint(m.getLatLng()) : null;
+    const card = document.getElementById('card').getBoundingClientRect(), size = App.map.getSize();
+    return { state: l.state, button: document.getElementById('locate').dataset.state,
+        dot: m ? [m.getLatLng().lat, m.getLatLng().lng] : null, px: pt ? [pt.x, pt.y] : null,
+        heading: l.heading, cone: cone ? cone.style.display : null, zoom: App.map.getZoom(),
+        cardTop: card.top, size: [size.x, size.y], folded: document.getElementById('card').classList.contains('following'),
+        profile: getComputedStyle(document.getElementById('prof')).display }; }"""
+
+
+def test_follow_me_shows_a_dot_keeps_the_map_on_it_and_lets_go_when_dragged(served_site):
+    """A simulated walk down Marietta Street on a phone-sized screen."""
+    from playwright.sync_api import sync_playwright
+    errors: list = []
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(executable_path=_chromium(),
+                                         args=["--no-sandbox", "--disable-gpu"])
+        except Exception as exc:                            # pragma: no cover
+            pytest.skip(f"no usable Chromium: {exc}")
+        ctx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True,
+                                  geolocation={"latitude": 33.76330, "longitude": -84.39560, "accuracy": 12},
+                                  permissions=["geolocation"])
+        page = ctx.new_page()
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(served_site, wait_until="load", timeout=240_000)
+        page.wait_for_function(
+            "window.App && App.family && !App.family.partial"
+            " && !document.getElementById('result').hidden", timeout=240_000)
+        before = page.evaluate(_LOC)
+        page.click("#locate")
+        page.wait_for_function("App.loc.marker", timeout=30_000)
+        page.wait_for_timeout(1200)
+        first = page.evaluate(_LOC)
+        for lat, lon in ((33.76300, -84.39535), (33.76268, -84.39508), (33.76236, -84.39480)):
+            ctx.set_geolocation({"latitude": lat, "longitude": lon, "accuracy": 8})
+            page.wait_for_timeout(1300)
+        walked = page.evaluate(_LOC)
+        page.evaluate("() => { App.map.fire('dragstart'); App.map.panBy([150, 0], { animate: false }); }")
+        ctx.set_geolocation({"latitude": 33.76205, "longitude": -84.39452, "accuracy": 8})
+        page.wait_for_timeout(1400)
+        dragged = page.evaluate(_LOC)
+        page.click("#locate")
+        page.wait_for_timeout(900)
+        back = page.evaluate(_LOC)
+        page.click("#locate")
+        page.wait_for_timeout(400)
+        off = page.evaluate(_LOC)
+        browser.close()
+    assert not errors, errors[:4]
+    assert before["state"] == "off" and before["dot"] is None and not before["folded"]
+    # a tap: the dot is where the phone says, in the middle of the map the card leaves clear
+    assert first["state"] == first["button"] == "follow" and first["zoom"] >= 16
+    assert abs(first["dot"][0] - 33.76330) < 1e-6 and abs(first["dot"][1] + 84.39560) < 1e-6
+    assert abs(first["px"][0] - first["size"][0] / 2) < 12 and abs(first["px"][1] - first["cardTop"] / 2) < 12
+    assert first["px"][1] < first["cardTop"] - 40, "the dot must not be under the card"
+    assert first["heading"] is None and first["cone"] == "none"      # not moved yet, no compass
+    assert first["folded"] and first["profile"] == "none"            # the card makes room
+    # walking south-east: the arrow points that way and the map has come along
+    assert 120 < walked["heading"] < 165 and walked["cone"] == "block"
+    assert abs(walked["dot"][0] - 33.76236) < 1e-6
+    assert abs(walked["px"][0] - walked["size"][0] / 2) < 12 and abs(walked["px"][1] - walked["cardTop"] / 2) < 12
+    # dragged: the dot keeps up with the phone, the map stays where it was put
+    assert dragged["state"] == dragged["button"] == "free"
+    assert abs(dragged["dot"][0] - 33.76205) < 1e-6 and abs(dragged["px"][0] - dragged["size"][0] / 2) > 60
+    # a tap comes back, another turns it off and unfolds the card
+    assert back["state"] == "follow" and abs(back["px"][0] - back["size"][0] / 2) < 12
+    assert off["state"] == off["button"] == "off" and off["dot"] is None and not off["folded"]
+    assert off["profile"] != "none"
+
+
+def test_follow_me_says_so_when_location_is_refused(served_site):
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(executable_path=_chromium(),
+                                         args=["--no-sandbox", "--disable-gpu"])
+        except Exception as exc:                            # pragma: no cover
+            pytest.skip(f"no usable Chromium: {exc}")
+        page = browser.new_context(viewport={"width": 1280, "height": 800}, permissions=[]).new_page()
+        page.goto(served_site, wait_until="load", timeout=240_000)
+        page.wait_for_function(
+            "window.App && App.family && !App.family.partial"
+            " && !document.getElementById('result').hidden", timeout=240_000)
+        page.click("#locate")
+        page.wait_for_function("document.getElementById('status').textContent.includes('Location')",
+                               timeout=30_000)
+        out = page.evaluate("() => ({ state: App.loc.state, dot: !!App.loc.marker,"
+                            " status: document.getElementById('status').textContent })")
+        browser.close()
+    assert out["state"] == "off" and not out["dot"]
+    assert "switched off" in out["status"]

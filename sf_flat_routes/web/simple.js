@@ -549,6 +549,7 @@
         "Streets © <a href='https://overturemaps.org'>Overture</a> / <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> · Elevation USGS 3DEP");
       L.control.zoom({ position: "bottomright" }).addTo(map);
       this.map = map;
+      this.buildLocate();
 
       if (DATA.hillshade) {
         const hs = L.imageOverlay(DATA.hillshade.url || DATA.hillshade.data_uri, DATA.hillshade.bounds,
@@ -785,6 +786,165 @@
      * calm streets on, length is comfort-weighted instead (engine.js
      * arcLenStress): a protected lane counts shorter, a busy arterial
      * longer, and the climbing axis is untouched. */
+    /* ---------------------------------------------------------- follow me */
+    /* A dot where the visitor is, an arrow for the way they are facing, and
+     * the map held on them as they walk. One button, three states: off;
+     * following (the map moves with the dot); and free, when the visitor
+     * has dragged the map away, where a tap brings it back. A tap while
+     * following turns it off.
+     *
+     * The position never leaves the page. The heading is the compass where
+     * the phone offers one, otherwise the direction of travel over the last
+     * few metres. The map stays north-up: Leaflet cannot turn, and a turned
+     * map would need the streets and their labels redrawn at every step. */
+    buildLocate() {
+      this.loc = { state: "off", watch: null, marker: null, ring: null, heading: null, compass: false, anchor: null };
+      if (!navigator.geolocation || !window.isSecureContext) return;       // a copy opened from disk
+      const map = this.map;
+      // top right: on a phone the card is a sheet over the bottom of the map
+      const Ctl = L.Control.extend({
+        options: { position: "topright" },
+        onAdd: () => {
+          const bar = L.DomUtil.create("div", "leaflet-bar locate");
+          const a = L.DomUtil.create("a", "", bar);
+          a.href = "#"; a.id = "locate"; a.setAttribute("role", "button");
+          a.title = "Show where I am"; a.setAttribute("aria-label", "Show where I am");
+          a.dataset.state = "off";
+          a.innerHTML = "<svg viewBox='0 0 20 20' aria-hidden='true'><circle cx='10' cy='10' r='5.2' fill='none' stroke='currentColor' stroke-width='1.7'/>"
+            + "<circle class='core' cx='10' cy='10' r='2.3'/><path d='M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3' stroke='currentColor' stroke-width='1.7' stroke-linecap='round'/></svg>";
+          L.DomEvent.disableClickPropagation(bar);
+          L.DomEvent.on(a, "click", (e) => { L.DomEvent.preventDefault(e); this.locateTap(); });
+          return bar;
+        },
+      });
+      new Ctl().addTo(map);
+      // dragging the map lets go of the dot without turning it off
+      map.on("dragstart", () => { if (this.loc.state === "follow") this.setLocate("free"); });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && this.loc.state !== "off") this.stayAwake();
+      });
+    },
+    /* Put a place in the middle of the part of the map the card leaves
+     * uncovered: right of it on a wide screen, above it on a phone. */
+    centreOn(ll) {
+      const map = this.map;
+      // Leaflet drops a move asked for while a zoom is gliding (the fit to
+      // a route just found, say): ask again when it lands
+      if (map._animatingZoom) {
+        if (!this._centreWait) {
+          this._centreWait = true;
+          map.once("zoomend", () => {
+            this._centreWait = false;
+            if (this.loc.state === "follow" && this.loc.marker) this.centreOn(this.loc.marker.getLatLng());
+          });
+        }
+        return;
+      }
+      const size = map.getSize(), card = $("card").getBoundingClientRect();
+      const wide = size.x > 640, z = Math.max(map.getZoom(), 16);
+      const vx = wide ? (card.right + size.x) / 2 : size.x / 2, vy = wide ? size.y / 2 : card.top / 2;
+      const p = map.project(ll, z).add([size.x / 2 - vx, size.y / 2 - vy]);
+      map.setView(map.unproject(p, z), z, { animate: true });
+    },
+    setLocate(state) {
+      this.loc.state = state;
+      // on a phone the card folds down to the trip and its figures while
+      // the dot is up, to leave the map room
+      $("card").classList.toggle("following", state !== "off");
+      const a = $("locate");
+      if (!a) return;
+      a.dataset.state = state;
+      const tip = state === "off" ? "Show where I am" : state === "follow" ? "Stop following me" : "Back to where I am";
+      a.title = tip; a.setAttribute("aria-label", tip);
+    },
+    locateTap() {
+      const loc = this.loc;
+      if (loc.state === "follow") { this.stopLocate(); return; }
+      if (loc.state === "free") {
+        this.setLocate("follow");
+        if (loc.marker) this.centreOn(loc.marker.getLatLng());
+        return;
+      }
+      this.setLocate("follow");
+      loc.watch = navigator.geolocation.watchPosition((p) => this.onPosition(p), (err) => {
+        // a lost fix (a tunnel, a tall street) comes back by itself: only
+        // a refusal ends it
+        if (err.code !== 1) { if (!loc.marker) swapText($("status"), "Looking for where you are…"); return; }
+        this.stopLocate();
+        swapText($("status"), "Location is switched off for this page. Allow it in the browser to see where you are.");
+      }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+      this.watchCompass();
+      this.stayAwake();
+    },
+    stopLocate() {
+      const loc = this.loc;
+      if (loc.watch !== null) navigator.geolocation.clearWatch(loc.watch);
+      loc.watch = null; loc.anchor = null; loc.heading = null;
+      if (loc.marker) { loc.marker.remove(); loc.marker = null; }
+      if (loc.ring) { loc.ring.remove(); loc.ring = null; }
+      if (loc.wake) { try { loc.wake.release(); } catch (e) { /* already gone */ } loc.wake = null; }
+      this.setLocate("off");
+    },
+    onPosition(p) {
+      const loc = this.loc, c = p.coords, ll = [c.latitude, c.longitude];
+      if (loc.state === "off") return;
+      // without a compass, the way the last few metres went
+      if (!loc.compass) {
+        if (Number.isFinite(c.heading) && c.speed > 0.4) loc.heading = c.heading;
+        else if (loc.anchor) {
+          const dx = (ll[1] - loc.anchor[1]) * 111320 * Math.cos(ll[0] * Math.PI / 180), dy = (ll[0] - loc.anchor[0]) * 110540;
+          if (Math.hypot(dx, dy) >= 8) { loc.heading = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360; loc.anchor = ll; }
+        }
+        if (!loc.anchor) loc.anchor = ll;
+      }
+      if (!loc.marker) {
+        loc.ring = L.circle(ll, { radius: c.accuracy || 0, stroke: false, fillColor: "#1a73e8", fillOpacity: 0.12, interactive: false }).addTo(this.map);
+        loc.marker = L.marker(ll, { interactive: false, keyboard: false, zIndexOffset: 900,
+          icon: L.divIcon({ className: "me", iconSize: [22, 22], iconAnchor: [11, 11],
+            html: "<div class='me-cone'></div><div class='me-dot'></div>" }) }).addTo(this.map);
+      } else {
+        loc.marker.setLatLng(ll); loc.ring.setLatLng(ll); loc.ring.setRadius(c.accuracy || 0);
+      }
+      this.turnDot();
+      if (loc.state === "follow") this.centreOn(L.latLng(ll));
+    },
+    turnDot() {
+      const loc = this.loc, el = loc.marker && loc.marker.getElement();
+      if (!el) return;
+      const cone = el.querySelector(".me-cone");
+      cone.style.display = loc.heading === null ? "none" : "block";
+      if (loc.heading !== null) cone.style.transform = "rotate(" + loc.heading.toFixed(0) + "deg)";
+    },
+    /* the compass, where there is one: iOS asks first, and only from a tap */
+    watchCompass() {
+      const loc = this.loc;
+      if (loc._compassOn || typeof DeviceOrientationEvent === "undefined") return;
+      const on = (e) => {
+        const h = Number.isFinite(e.webkitCompassHeading) ? e.webkitCompassHeading
+          : (e.absolute && Number.isFinite(e.alpha) ? (360 - e.alpha) % 360 : null);
+        if (h === null || loc.state === "off") return;
+        loc.compass = true; loc.heading = h; this.turnDot();
+      };
+      const listen = () => {
+        loc._compassOn = true;
+        window.addEventListener("deviceorientationabsolute", on);
+        window.addEventListener("deviceorientation", on);
+      };
+      if (typeof DeviceOrientationEvent.requestPermission === "function") {
+        DeviceOrientationEvent.requestPermission().then((r) => { if (r === "granted") listen(); }).catch(() => { /* asked outside a tap, or refused */ });
+      } else listen();
+    },
+    /* keep the screen on while the dot is up, where the browser allows it */
+    stayAwake() {
+      const loc = this.loc;
+      if (!navigator.wakeLock || loc.wake) return;
+      navigator.wakeLock.request("screen").then((w) => {
+        loc.wake = w;
+        w.addEventListener("release", () => { if (loc.wake === w) loc.wake = null; });
+        if (loc.state === "off") { w.release(); }
+      }).catch(() => { /* low battery, or not allowed */ });
+    },
+
     /* ------------------------------------------------------------ cameras */
     cameras: Cameras, camSectors,
     /* the snapshot built into the page: inline, or a file beside the graph */

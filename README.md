@@ -98,6 +98,16 @@ Krog Street Market the flattest plain route spends 1.1 miles on such
 blocks and the avoiding ones none; from Georgia Tech into Five Points
 station 450 ft cannot be avoided. Both boxes can be ticked together.
 
+**Follow me**: the target button on the map puts a dot where you are,
+with an arrow for the way you are facing, and keeps the map on you as you
+walk. Drag the map to look elsewhere and tap the button to come back; tap
+it while following to turn it off. On a phone the card folds down to the
+trip and its figures while the dot is up. The position stays on the phone,
+the heading is the compass where there is one and otherwise the direction
+of the last few metres, and the screen is kept awake where the browser
+allows. The map stays north-up, and there is no turn-by-turn: it is the
+route with a "you are here" on it.
+
 ![The route finder](outputs/screenshot_route_finder.png)
 
 Place search is **offline**: street intersections ("10th & Peachtree"),
@@ -727,7 +737,7 @@ with `uv run python tests/qa_screenshots.py`.
 ### Tests
 
 ```bash
-uv run python -m pytest tests/ -q             # 174 tests
+uv run python -m pytest tests/ -q             # 176 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,
