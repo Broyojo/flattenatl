@@ -87,6 +87,17 @@ fifth of a mile. From Five Points to Lenox Square the plain routes pass 8
 to 25; with the box ticked every route passes one, beside the mall, that
 cannot be avoided.
 
+**Avoid high-crime areas** works the same way with a different map: the
+blocks with the most reported violent crime in public places over the last
+two years, from the Atlanta Police Department's incident reports. They are
+4% of the city's street length, about a third of Downtown and a fifth of
+Midtown and West End among them. Those blocks are closed first; where a
+trip starts or ends among them, the way through that spends the least
+distance on them is used, and that stretch is marked. From Georgia Tech to
+Krog Street Market the flattest plain route spends 1.1 miles on such
+blocks and the avoiding ones none; from Georgia Tech into Five Points
+station 450 ft cannot be avoided. Both boxes can be ticked together.
+
 ![The route finder](outputs/screenshot_route_finder.png)
 
 Place search is **offline**: street intersections ("10th & Peachtree"),
@@ -528,6 +539,40 @@ not a proven minimum, because the charge looks only one block back.
 
 A camera nobody has mapped is not avoided.
 
+### Crime
+
+The Atlanta Police Department publishes every incident report since 2021
+as an ArcGIS feature service, updated daily (about 310,000 reports), which
+can be asked for exactly the rows wanted; nothing is scraped.
+[`crime.py`](sf_flat_routes/crime.py) fetches the last two years of the
+offenses that bear on walking down a street, and keeps violent crime
+against a person, in a public place, between people who are not family:
+
+- robbery, aggravated assault, murder, kidnapping, rape and the other
+  forcible sex offenses at full weight, simple assault at half;
+- nothing flagged as family violence, and nothing whose location is a
+  home, an apartment, a hotel room, a shelter or a jail;
+- no property crime at all. A car break-in is a reason not to park
+  somewhere, not a reason not to walk there.
+
+That keeps 5,768 of 15,907 reports. They are binned on a 25 m grid, spread
+with a 75 m Gaussian (they are geocoded to a street address, so finer
+would be false precision) and scaled to weighted incidents per square
+kilometre per year; a block takes the highest value along its length, and
+the page carries it as one byte per block. A block is *high-crime* at 75
+or more, which is about five incidents within 150 m in a year and 4.2% of
+the city's street length. `HIGH_CRIME_DENSITY` is the one number to change:
+50 closes 7%, 100 closes 2.4%.
+
+The routing is the camera machinery (`closeBlocks`, `leastExposed` in
+`simple.js`): closed first, reopened only where nothing else connects the
+two ends, a metre on such a block then counting twenty-five times.
+
+It is a count of reports, not a rate and not a risk. The busiest streets
+score high partly because more people are on them, and where reports are
+written follows where police are as well as where trouble is. It says
+nothing about the time of day.
+
 ### Passes and barriers
 
 "How much climbing is unavoidable between these two parts of the city?" is a
@@ -579,6 +624,7 @@ prints the full table with limitations.
 | City of Atlanta official neighborhoods | City of Atlanta Department of City Planning, served by Atlanta BeltLine, Inc. | 248 polygons with NPU | Open data | Neighborhood names; analysis origins and destinations |
 | City of Atlanta limits | City of Atlanta Department of Transportation | One polygon, 136.3 sq mi | Open data | Clips the network, the search index and the hillshade |
 | Existing bicycle and trail facilities, April 2026 | Atlanta Regional Commission | 846 lines region-wide, about 210 in the city, with facility type and buffer | CC BY 4.0 | Route finder: bike comfort weighting (`bikeways.py`) |
+| Atlanta Police Department incident reports (NIBRS), 2021 to date | Atlanta Police Department open data (ArcGIS feature service) | One point per report, geocoded to a street address, with offense, location type and family-violence flag; updated daily | Open data | Route finder: avoid high-crime areas (`crime.py`); two years of violent offenses in public places |
 | Automated license plate readers | OpenStreetMap contributors, mapped through [DeFlock](https://deflock.me); read from the Overpass API | Point per camera with the direction it faces; 1,360 in the study box; snapshot at build, live when the option is ticked | ODbL 1.0 | Route finder: avoid Flock cameras (`cameras.py`) |
 | Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Explorer bicycle overlay |
 | Overture Maps base theme (land use, infrastructure, land), release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Mapped outlines and points | ODbL 1.0 | Route finder search only: parks, schools, stations, bridges |
@@ -681,7 +727,7 @@ with `uv run python tests/qa_screenshots.py`.
 ### Tests
 
 ```bash
-uv run python -m pytest tests/ -q             # 168 tests
+uv run python -m pytest tests/ -q             # 174 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,
@@ -732,6 +778,7 @@ sf_flat_routes/
   webgraph.py         packs the graph into a compressed browser payload
   bikeways.py         bike facility conflation and the bike comfort table
   cameras.py          license-plate camera snapshot (DeFlock / OpenStreetMap)
+  crime.py            reported violent crime per block (Atlanta Police)
   places.py           offline place index for the route finder, and the
                       hillshade base image
   viz_interactive.py  assembles the two self-contained web pages
@@ -805,6 +852,11 @@ the sea.
   measured about eight on San Francisco's 41% Bradford Street). For a
   project about *flat* routes, clipping the peak of a wall is a much
   cheaper error than inventing gradient on flat ground.
+- **"High-crime" is a count of police reports.** Not a rate, since nobody
+  knows how many people walk each block, and not a prediction. Two years of
+  violent offenses in public places, one threshold, no time of day. It
+  marks parts of Downtown, Midtown and the west and south sides that many
+  people walk through daily without incident.
 - **Camera avoidance is only as good as the map.** DeFlock is
   crowd-sourced: an unmapped camera is not avoided, a removed one may
   linger, and what each one sees is a 40 m wedge, not a measurement. It

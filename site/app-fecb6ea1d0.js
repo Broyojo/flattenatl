@@ -1543,7 +1543,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
   const App = {
     state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
       loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: false,
-      avoid: false },
+      avoid: false, safe: false },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -1565,6 +1565,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this.buildMap();
       this.buildUI();
       await this.loadCameras();
+      this.loadCrime(bundle);
       $("status").textContent = "";
       if (!this.readHash() && DATA.default && DATA.default.length === 2) {
         this.setPoint("from", this.placeToPoint(DATA.default[0]), false);
@@ -1783,6 +1784,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         this.recompute(true);            // a different kind of run: reframe it
       });
       $("cams").addEventListener("change", () => this.setAvoid($("cams").checked));
+      $("safe").addEventListener("change", () => {
+        this.state.safe = $("safe").checked;
+        this.recompute("auto");
+      });
       const sl = $("sl");
       sl.addEventListener("input", () => {
         if (!this.state.loop) { this.state.t = +sl.value; this.show(); this.writeHash(); return; }
@@ -1836,7 +1841,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     camNote() {
       const when = Cameras.asof ? " " + (Cameras.live ? "live, " : "as of ") + Cameras.asof.slice(0, 10) : "";
       $("camnote").textContent = Cameras.watching.toLocaleString() + " license-plate cameras on DeFlock,"
-        + when + (Cameras.live ? "" : " (snapshot)");
+        + when;
     },
     setAvoid(on) {
       this.state.avoid = !!on;
@@ -1857,9 +1862,20 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
      * reason its count is not zero. */
     drawTouched(u) {
       if (this._touchLayer) { this._touchLayer.remove(); this._touchLayer = null; }
-      if (!this.state.avoid || !u || !u.camIds || !u.camIds.length) return;
+      const cams = this.state.avoid && u && u.camIds ? u.camIds : [];
+      const hot = this.state.safe && u && u.hot ? u.hot : [];
+      if (!cams.length && !hot.length) return;
       const layer = L.layerGroup(), colour = css("--short") || "#d1452c";
-      for (const id of u.camIds) {
+      // a wide red band under each stretch of high-crime block still on the route
+      const g = this.graph, tail = g.reverse().tail;
+      for (let i = 0; i < hot.length;) {
+        let j = i + 1;
+        while (j < hot.length && tail[hot[j]] === g.head[hot[j - 1]]) j++;
+        L.polyline(g.geometry(hot.slice(i, j), this.geom), { color: colour, weight: 15, opacity: 0.5,
+          lineCap: "round", interactive: false }).addTo(layer);
+        i = j;
+      }
+      for (const id of cams) {
         const c = Cameras.list[id];
         if (!c) continue;
         const KX = 111320 * Math.cos(c.lat * Math.PI / 180), KY = 110540;
@@ -1879,71 +1895,107 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       }
       this._touchLayer = layer.addTo(this.map);
     },
-    /* Close the watched blocks for this search. Returns how many cameras
-     * could not be avoided (0 when a clear way exists, or when not avoiding).
-     * `open` are blocks to leave open whatever watches them. */
-    blockCameras(open) {
-      const g = this.graph;
-      if (!this.avoiding()) { g.block(null); return; }
-      if (!open || !open.size) { g.block(Cameras.mask); return; }
-      const mask = new Uint8Array(Cameras.mask);
+    /* ------------------------------------------------- high-crime blocks */
+    /* Reported violent crime per block, a byte each (crime.py): the blocks
+     * at or above the threshold are the ones "avoid high-crime areas"
+     * closes. */
+    loadCrime(bundle) {
+      const meta = DATA.crime;
+      if (!meta || !bundle.has("edge_crime")) return;
+      const d = bundle.array("edge_crime"), mask = new Uint8Array(d.length), cut = meta.threshold / meta.step;
+      for (let i = 0; i < d.length; i++) if (d[i] >= cut) mask[i] = 1;
+      this.crimeMask = mask;
+      $("saferow").hidden = false;
+      $("safenote").textContent = "violent crime in public, " + meta.years + " years to "
+        + meta.until + ", Atlanta Police";
+    },
+    shunning() { return this.state.safe && !!this.crimeMask; },
+
+    /* ------------------------------------------- things a route must avoid */
+    /* Cameras and high-crime blocks work the same way: they come before
+     * distance and climbing. The blocks to avoid are closed to every search,
+     * and only if that leaves no way through are the fewest possible
+     * reopened. */
+    closedMask() {
+      const a = this.avoiding() ? Cameras.mask : null, b = this.shunning() ? this.crimeMask : null;
+      if (!a || !b) return a || b;
+      const m = new Uint8Array(a.length);
+      for (let i = 0; i < m.length; i++) m[i] = a[i] | b[i];
+      return m;
+    },
+    /* close them for this search, except the blocks in `open` */
+    closeBlocks(open) {
+      const g = this.graph, closed = this.closedMask();
+      if (!closed) { g.block(null); return; }
+      if (!open || !open.size) { g.block(closed); return; }
+      const mask = new Uint8Array(closed);
       for (const e of open) mask[e] = 0;
       g.block(mask);
     },
-    /* No way from a to b avoids every camera: find the way that passes the
-     * fewest, and open only the blocks it needs. A camera is charged once,
-     * on entering its view (CAM_COST metres' worth, far more than any
-     * detour), and not again on the next block if that is still in the same
-     * camera's view; a watched metre also counts three times, so that
-     * between two ways past the same number of cameras the one in view for
-     * less distance wins. The charge looks only at the block just walked,
-     * which makes this a very good answer rather than a proven minimum. */
-    leastSeen(a, b, mode) {
-      const g = this.graph, ec = Cameras.edgeCams, bit = g.modeBit(mode), CAM_COST = 5000;
+    /* The least exposed way from a node, over every street: to b, or (with
+     * no b) to the nearest corner that has an open street leading off it.
+     * Returns the closed blocks that way needs opened.
+     *
+     * A camera is charged once, on entering its view (CAM_COST metres'
+     * worth, far more than any detour), and not again on the next block if
+     * that is still in the same camera's view; a watched metre also counts
+     * three times, so that between two ways past the same number of
+     * cameras the one in view for less distance wins. A metre of high-crime
+     * block counts HOT_COST times. The camera charge looks only at the
+     * block just walked, which makes this a very good answer rather than a
+     * proven minimum. */
+    leastExposed(a, b, mode) {
+      const g = this.graph, bit = g.modeBit(mode), CAM_COST = 5000, HOT_COST = 25;
+      const ec = this.avoiding() ? Cameras.edgeCams : null, hot = this.shunning() ? this.crimeMask : null;
+      const closed = this.closedMask();
       g.block(null);
       const dist = new Float64Array(g.n).fill(Infinity), prev = new Int32Array(g.n).fill(-1);
       const done = new Uint8Array(g.n), heap = new MinHeap();
+      let end = -1;
       dist[a] = 0; heap.push(0, a);
       while (heap.n > 0) {
         const u = heap.pop();
         if (done[u]) continue;
         done[u] = 1;
-        if (u === b) break;
-        const before = prev[u] >= 0 ? ec.get(g.arcEdge[prev[u]]) : null;
+        if (u === b) { end = u; break; }
+        const before = ec && prev[u] >= 0 ? ec.get(g.arcEdge[prev[u]]) : null;
+        let free = false;
         for (let k = g.indptr[u]; k < g.indptr[u + 1]; k++) {
           if ((g.arcFlags[k] & bit) === 0) continue;
-          const cams = ec.get(g.arcEdge[k]);
-          let c = g.arcLen[k] / g.DM;
+          const e = g.arcEdge[k], len = g.arcLen[k] / g.DM;
+          if (!closed[e]) free = true;
+          let c = len;
+          const cams = ec ? ec.get(e) : null;
           if (cams) {
-            c *= 3;
+            c += 2 * len;
             for (const id of cams) if (!before || before.indexOf(id) < 0) c += CAM_COST;
           }
+          if (hot && hot[e]) c += HOT_COST * len;
           const v = g.head[k], nd = dist[u] + c;
           if (nd < dist[v]) { dist[v] = nd; prev[v] = k; heap.push(nd, v); }
         }
+        if (b === undefined && free) { end = u; break; }
       }
-      if (!done[b]) return null;
+      if (end < 0) return null;
       const open = new Set();
-      for (let v = b, guard = 0; v !== a && guard <= g.n; guard++) {
+      for (let v = end, guard = 0; v !== a && guard <= g.n; guard++) {
         const k = prev[v];
         if (k < 0) return null;
-        if (ec.has(g.arcEdge[k])) open.add(g.arcEdge[k]);
+        if (closed[g.arcEdge[k]]) open.add(g.arcEdge[k]);
         v = g.arcTail(k);
       }
       return open;
     },
-    /* every block watched by a camera that also watches this corner: a loop
-     * that starts in view has to leave through them */
-    seenFrom(node) {
-      const g = this.graph, cams = new Set(), open = new Set();
-      const rev = g.reverse();
-      const touch = (a) => { for (const c of Cameras.edgeCams.get(g.arcEdge[a]) || []) cams.add(c); };
-      for (let a = g.indptr[node]; a < g.indptr[node + 1]; a++) touch(a);
-      for (let k = rev.indptr[node]; k < rev.indptr[node + 1]; k++) touch(rev.arcs[k]);
-      if (cams.size) for (const [e, l] of Cameras.edgeCams) if (l.some((c) => cams.has(c))) open.add(e);
-      return open;
+    /* what the route on show passes, for the line under the figures */
+    avoidText(u) { return this.camText(u) + this.crimeText(u); },
+    crimeText(u) {
+      if (!this.crimeMask || !u.hot) return "";
+      const far = u.hotM / MI >= 0.1 ? (u.hotM / MI).toFixed(1) + " mi"
+        : Math.max(10, Math.round(u.hotM * FT / 10) * 10) + " ft";
+      if (!this.shunning()) return u.hotM < 1 ? "" : " " + far + " through high-crime blocks.";
+      return u.hotM < 1 ? " <span class='camok'>Clear of high-crime blocks.</span>"
+        : " <span class='camhit'>" + far + " through high-crime blocks that cannot be avoided, marked on the map.</span>";
     },
-    /* "Passes 3 license-plate cameras." for the route on show */
     camText(u) {
       if (!Cameras.mask || u.cams === undefined) return "";
       if (!u.cams) return this.avoiding() ? " <span class='camok'>In view of no camera.</span>"
@@ -2009,7 +2061,8 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const g = this.graph;
       swapText($("status"), "Trying loops…");
       $("slpos").textContent = fmtLoop(loopMi);
-      this.blockCameras(this.avoiding() ? this.seenFrom(from.node) : null);
+      // a loop that starts somewhere closed is let out by the least exposed way
+      this.closeBlocks(this.closedMask() ? this.leastExposed(from.node, undefined, mode) : null);
       const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm(), outBack: this.state.outBack });
       this.scanStart(from, loopMi * MI);
       const run = () => {
@@ -2115,13 +2168,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       }
       if (from.node === to.node) { this.clearRoute(); swapText($("status"), "Those are the same corner."); return; }
       const g = this.graph;
-      this.blockCameras();
+      this.closeBlocks();
       let shortest = g.route(from.node, to.node, mode, this.weights(0));
-      if (!shortest && this.avoiding()) {
-        // every way is watched somewhere: open only the blocks the least
-        // watched way needs, and keep the rest closed
-        const open = this.leastSeen(from.node, to.node, mode);
-        this.blockCameras(open);
+      if (!shortest && this.closedMask()) {
+        // no way through what is left: open only the blocks the least
+        // exposed way needs, and keep the rest closed
+        const open = this.leastExposed(from.node, to.node, mode);
+        this.closeBlocks(open);
         if (open) shortest = g.route(from.node, to.node, mode, this.weights(0));
       }
       if (!shortest) {
@@ -2171,7 +2224,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       return { arcs, stats: s, latlngs: this.graph.geometry(arcs, this.geom),
         profile: resample(s.profile, 160),
         camIds: Cameras.mask ? [...Cameras.onRoute(this.graph, arcs)] : undefined,
-        get cams() { return this.camIds && this.camIds.length; } };
+        get cams() { return this.camIds && this.camIds.length; },
+        hot: this.crimeMask ? arcs.filter((a) => this.crimeMask[this.graph.arcEdge[a]]) : undefined,
+        hotM: this.crimeMask ? arcs.reduce((t, a) => t + (this.crimeMask[this.graph.arcEdge[a]]
+          ? this.graph.arcLen[a] / this.graph.DM : 0), 0) : 0 };
     },
 
     /* the frontier is in, sorted shortest to flattest: pick the routes the
@@ -2373,7 +2429,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         setText($("delta"), (this.family.unique.length > 1
           ? (this.calm() ? "The shortest route on calm streets. Slide right to trade distance for less climbing."
             : "The shortest route. Slide right to trade distance for less climbing.")
-          : "Shortest and flattest at once.") + this.camText(u), true);
+          : "Shortest and flattest at once.") + this.avoidText(u), true);
       } else {
         const dd = s.distance_m - sh.distance_m, dc = sh.elev_gain_m - s.elev_gain_m;
         const pd = sh.distance_m ? Math.round(100 * dd / sh.distance_m) : 0;
@@ -2382,7 +2438,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           : "<b class='up'>+" + (dd / MI).toFixed(1) + " mi</b> (" + pd + "% longer)";
         const less = dc <= 0 ? "no less climbing"
           : "<b class='down'>−" + Math.round(dc * FT).toLocaleString() + " ft</b> of climbing (" + pc + "% less)";
-        setText($("delta"), "vs. shortest: " + longer + ", " + less + "." + this.camText(u), true);
+        setText($("delta"), "vs. shortest: " + longer + ", " + less + "." + this.avoidText(u), true);
       }
     },
 
@@ -2399,7 +2455,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
           + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
       } else html = ob + "About as flat as loops from here get.";
       swapText(box, (el) => {
-        el.innerHTML = html + this.camText(u);
+        el.innerHTML = html + this.avoidText(u);
         if (n > 1) {
           const b = document.createElement("button");
           b.type = "button"; b.className = "link"; b.id = "nextloop";
@@ -2615,7 +2671,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
       // the mode letter(s), then o for out-and-back, then c for avoiding cameras
-      const cam = this.state.avoid ? "c" : "";
+      const cam = (this.state.avoid ? "c" : "") + (this.state.safe ? "s" : "");
       const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
       if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "o" : "") + cam, String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
       return ["t", c(from), c(to), m + cam, t.toFixed(3),
@@ -2667,8 +2723,13 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       this._pendingLoopIdx = Math.max(0, parseInt(parts[5], 10) || 0);
       return true;
     },
-    /* a trailing c on the mode: the link was made avoiding cameras */
+    /* trailing letters on the mode: c, the link was made avoiding cameras;
+     * s, avoiding high-crime areas */
     readAvoid(tok) {
+      while (tok && tok.endsWith("s")) {
+        tok = tok.slice(0, -1);
+        if (this.crimeMask) { this.state.safe = true; $("safe").checked = true; }
+      }
       if (!tok || !tok.endsWith("c")) return tok;
       if (Cameras.mask) {
         this.state.avoid = true; $("cams").checked = true;

@@ -266,6 +266,30 @@ DATASETS: tuple[Dataset, ...] = (
         optional=True,
     ),
     Dataset(
+        key="apd_crime",
+        title="Atlanta Police Department incident reports (NIBRS), 2021 to date",
+        publisher="Atlanta Police Department, open data",
+        url="https://services3.arcgis.com/Et5Qfajgiyosiw4d/arcgis/rest/services/"
+            "OpenDataWebsite_Crime_view/FeatureServer/0",
+        accessed=ACCESS_DATE,
+        resolution="One point per report, geocoded to a street address, with "
+                   "offense, location type and family-violence flag; about "
+                   "310,000 reports, updated daily",
+        licence="Open data (City of Atlanta)",
+        role="Route finder: 'avoid high-crime areas' (see crime.py). Only "
+             "the last two years of violent offenses in public places are "
+             "fetched, about 5,800 reports.",
+        local="data/raw/apd_crime.json",
+        limitations=(
+            "Reported crime, counted and not divided by how many people are "
+            "about, so busy streets score high partly for being busy. "
+            "Geocoded to an address, not to where on the block. Where "
+            "reports are written follows where police are as well as where "
+            "trouble is. City of Atlanta only."
+        ),
+        optional=True,
+    ),
+    Dataset(
         key="alpr_cameras",
         title="Automated license plate readers (DeFlock / OpenStreetMap)",
         publisher="OpenStreetMap contributors, mapped through DeFlock (deflock.me)",

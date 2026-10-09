@@ -280,6 +280,13 @@ def download_all(force: bool = False) -> dict[str, object]:
         except Exception as exc:  # optional: the route page hides the option
             log.warning("camera data unavailable (%s); the route page will "
                         "not offer to avoid cameras", exc)
+    with step("downloading reported crime (Atlanta Police Department)", log):
+        try:
+            from .crime import download_crime
+            out["crime"] = download_crime(force=force)
+        except Exception as exc:  # optional: the route page hides the option
+            log.warning("crime data unavailable (%s); the route page will "
+                        "not offer to avoid high-crime areas", exc)
     with step("downloading places and addresses (Overture)", log):
         try:
             out["places"], out["addresses"] = download_places(force=force)

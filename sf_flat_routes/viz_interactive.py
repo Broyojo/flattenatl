@@ -356,6 +356,12 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
         log.warning("hillshade unavailable (%s)", exc)
         hillshade = None
 
+    from .crime import build_crime
+    crime = build_crime(ctx.edges)
+    if crime is None:
+        log.warning("no crime data; the route page will not offer to avoid high-crime areas")
+    else:
+        arrays["edge_crime"] = crime["edge_crime"]
     cameras = build_cameras()
     if cameras is None:
         log.warning("no camera snapshot; the route page will not offer to avoid them")
@@ -365,6 +371,7 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
     common = {
         "manifest": packed["manifest"], "meta": packed["meta"], "addr": addr_meta,
         "labels": _labels(ctx), "default": _default_trip(places, pts),
+        "crime": crime and crime["meta"],
     }
 
     # one file that opens from disk: everything inline

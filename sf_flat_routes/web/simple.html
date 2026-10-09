@@ -54,6 +54,10 @@
     <input type="checkbox" id="cams">
     <span>Avoid Flock cameras <small id="camnote">license-plate cameras on DeFlock</small></span>
   </label>
+  <label class="calm" id="saferow" hidden>
+    <input type="checkbox" id="safe">
+    <span>Avoid high-crime areas <small id="safenote">violent crime in public places, Atlanta Police reports</small></span>
+  </label>
   <div class="statusrow">
     <div class="status" id="status"></div>
     <button class="link" id="share" type="button" hidden>Copy link</button>
@@ -100,6 +104,16 @@
     asks OpenStreetMap's Overpass API for the current map, which is the
     only request this page ever makes to anyone else. A camera nobody has
     mapped is not avoided.</p>
+    <p class="fine"><i>Avoid high-crime areas</i> keeps the route off the
+    blocks with the most reported violent crime: robberies, assaults and
+    the like in public places over the last two years, from the Atlanta
+    Police Department's incident reports. Crimes at home and between
+    family are left out, as is all property crime. About one street in
+    twenty-five is closed. It works the way the cameras do: those blocks
+    are avoided first, and where a trip starts or ends among them the way
+    through that spends the least distance on them is used and marked.
+    These are counts of reports, not the odds of anything happening to
+    you, and a busy street has more of them partly for being busy.</p>
     <p class="fine">Place search is offline: the city's intersections,
     places and addresses are built into this page. Routes stay inside the Atlanta city limits.
     <a href="/*__REPO_URL__*/">Source, data and the full analysis</a>.</p>

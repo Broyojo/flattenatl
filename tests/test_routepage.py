@@ -198,6 +198,7 @@ def page_results():
             idx: App.state.loopIdx, from: document.getElementById('from').value,
             n: App.family.unique.length, slVal: +document.getElementById('sl').value })""")
         out["cameras"] = _drive_cameras(page)
+        out["crime"] = _drive_crime(page)
         browser.close()
     return out, errors
 
@@ -210,6 +211,45 @@ _CAM_STATE = """() => { const g = App.graph, C = App.cameras, f = App.family.uni
         delta: document.getElementById('delta').textContent, token: App.token(),
         rings: App._touchLayer ? App._touchLayer.getLayers().length : 0,
         shownCams: App.shown.camIds.slice() }; }"""
+
+
+_CRIME_STATE = """() => { const g = App.graph, f = App.family.unique;
+    return { safe: App.state.safe, avoid: App.state.avoid, n: f.length, hot: f.map(u => u.hotM), cams: f.map(u => u.cams),
+        miles: f.map(u => u.stats.distance_m / 1609.344), gain: f.map(u => u.stats.elev_gain_m),
+        delta: document.getElementById('delta').textContent, token: App.token(),
+        marks: App._touchLayer ? App._touchLayer.getLayers().length : 0 }; }"""
+
+
+def _drive_crime(page) -> dict:
+    """The default trip, and one that ends inside the high-crime blocks."""
+    ready = "App.family && !App.family.partial"
+    page.goto("about:blank")
+    page.goto(SIMPLE_HTML.resolve().as_uri(), wait_until="load", timeout=240_000)
+    page.wait_for_function("window.App && " + ready
+                           + " && !document.getElementById('result').hidden", timeout=240_000)
+    out = {"row": page.evaluate("""() => ({ shown: !document.getElementById('saferow').hidden,
+        note: document.getElementById('safenote').textContent,
+        closed: App.crimeMask.reduce((a, b) => a + b, 0), edges: App.crimeMask.length })""")}
+    out["default_off"] = page.evaluate(_CRIME_STATE)
+    page.click("#safe")
+    page.wait_for_function("App.state.safe && " + ready, timeout=120_000)
+    page.wait_for_timeout(600)
+    out["default_on"] = page.evaluate(_CRIME_STATE)
+    # Georgia Tech to Five Points: the station is in the middle of them
+    trip = """(on) => { if (App.state.safe !== on) document.getElementById('safe').click();
+        App.setPoint('from', App.pointAt(-84.39881, 33.77609, 'Georgia Tech'), false);
+        App.setPoint('to', App.pointAt(-84.3916, 33.75389, 'Five Points'), false);
+        App.recompute('auto'); }"""
+    for on, key in ((False, "downtown_off"), (True, "downtown_on")):
+        page.evaluate(trip, on)
+        page.wait_for_function("(on) => App.state.safe === on && " + ready, arg=on, timeout=120_000)
+        page.wait_for_timeout(600)
+        out[key] = page.evaluate(_CRIME_STATE)
+    page.click("#cams")                                  # and cameras as well
+    page.wait_for_function("App.state.avoid && " + ready, timeout=120_000)
+    page.wait_for_timeout(600)
+    out["both"] = page.evaluate(_CRIME_STATE)
+    return out
 
 
 def _drive_cameras(page) -> dict:
@@ -420,6 +460,35 @@ def test_where_no_route_is_clear_every_route_passes_the_fewest(page_results):
     link = c["link"]
     assert link["avoid"] and link["checked"] and link["token"] == on["token"]
     assert set(link["cams"]) == set(on["cams"])
+
+
+def test_high_crime_blocks_are_avoided_before_distance_and_climbing(page_results):
+    c = page_results[0]["crime"]
+    assert c["row"]["shown"] and "Atlanta Police" in c["row"]["note"]
+    assert 0.02 < c["row"]["closed"] / c["row"]["edges"] < 0.15
+    off, on = c["default_off"], c["default_on"]
+    assert not off["safe"] and on["safe"]
+    assert max(off["hot"]) > 100, "the plain routes should cross some high-crime blocks"
+    assert on["n"] >= 2 and max(on["hot"]) == 0 and "Clear of high-crime blocks" in on["delta"]
+    assert off["marks"] == 0 and on["marks"] == 0        # nothing to mark
+    for a, b in zip(on["miles"], on["miles"][1:]):
+        assert b >= a - 1e-9
+    for a, b in zip(on["gain"], on["gain"][1:]):
+        assert b <= a + 1e-6
+    assert on["miles"][0] >= off["miles"][0] - 1e-9
+    assert off["token"].split("~")[5] == "w" and on["token"].split("~")[5] == "ws"
+
+
+def test_a_trip_into_high_crime_blocks_spends_the_least_distance_on_them(page_results):
+    c = page_results[0]["crime"]
+    off, on, both = c["downtown_off"], c["downtown_on"], c["both"]
+    # the least any plain route spends there is more than every avoiding route does
+    assert 0 < max(on["hot"]) < min(off["hot"])
+    assert "cannot be avoided" in on["delta"] and on["marks"] >= 1 and off["marks"] == 0
+    assert "through high-crime blocks" in off["delta"]
+    # cameras and crime together: both letters on the link, neither made worse
+    assert both["token"].split("~")[5] == "wcs"
+    assert max(both["hot"]) <= max(on["hot"]) + 30 and max(both["cams"]) <= max(on["cams"])
 
 
 def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
