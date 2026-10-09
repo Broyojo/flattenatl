@@ -76,8 +76,10 @@ Flock Safety, and all makes are avoided. It comes before everything else.
 With the box ticked the slider runs only over routes in view of no camera,
 from the shortest of those to the flattest. Where no route is clear, the
 page finds the one that passes the fewest, and the slider runs over routes
-that pass only those cameras, which are ringed on the map. Every route,
-box ticked or not, says how many cameras it is in view of.
+that pass only those cameras, which are ringed on the map. Nothing about
+cameras is drawn unless the box is ticked, and then only the ones a route
+could not avoid; the line under the figures says how many cameras a route
+is in view of either way.
 
 From Georgia Tech to Krog Street Market the plain routes pass two to six
 cameras and the camera-free ones swap Edgewood Avenue for Auburn, for a

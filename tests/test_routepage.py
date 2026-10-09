@@ -208,7 +208,6 @@ _CAM_STATE = """() => { const g = App.graph, C = App.cameras, f = App.family.uni
         opened: f.map(u => u.arcs.filter(a => C.mask[g.arcEdge[a]] && (g.arcFlags[a] & 1)).length),
         miles: f.map(u => u.stats.distance_m / 1609.344), gain: f.map(u => u.stats.elev_gain_m),
         delta: document.getElementById('delta').textContent, token: App.token(),
-        dots: App._camLayer ? App._camLayer.getLayers().length : 0,
         rings: App._touchLayer ? App._touchLayer.getLayers().length : 0,
         shownCams: App.shown.camIds.slice() }; }"""
 
@@ -391,7 +390,8 @@ def test_avoiding_cameras_comes_before_everything_else(page_results):
     off, on = c["default_off"], c["default_on"]
     assert not off["avoid"] and on["avoid"]
     assert max(off["cams"]) >= 1, "the plain routes should pass a camera somewhere"
-    assert off["dots"] == 0 and on["dots"] > 300          # every camera drawn while avoiding
+    # nothing about cameras is drawn until asked, and then nothing if none is passed
+    assert off["rings"] == 0 and "In view of" in off["delta"] and "ringed" not in off["delta"]
     assert on["n"] >= 2 and set(on["cams"]) == {0} and set(on["watched"]) == {0}
     assert on["rings"] == 0 and "no camera" in on["delta"]
     # still a frontier: sliding right is never shorter and never climbs more
@@ -415,8 +415,8 @@ def test_where_no_route_is_clear_every_route_passes_the_fewest(page_results):
     # except the blocks that had to be opened for them
     assert on["rings"] >= 2 * len(on["shownCams"]) and len(on["shownCams"]) == on["cams"][-1]
     assert on["watched"] == on["opened"]
-    # the plain routes ring theirs too
-    assert off["rings"] >= 2 * len(off["shownCams"]) > 0
+    # with the box off the same trip draws nothing, though it passes more
+    assert off["rings"] == 0 and len(off["shownCams"]) > len(on["shownCams"])
     link = c["link"]
     assert link["avoid"] and link["checked"] and link["token"] == on["token"]
     assert set(link["cams"]) == set(on["cams"])

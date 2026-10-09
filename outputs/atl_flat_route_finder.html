@@ -2758,7 +2758,6 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
     setAvoid(on) {
       this.state.avoid = !!on;
       $("cams").checked = this.state.avoid;
-      this.drawCameras();
       this.recompute("auto");
       // the snapshot answers at once; the live set follows, and re-plans
       // only if it changes what the cameras see
@@ -2766,35 +2765,16 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
         if (!changed) return;
         Cameras.cover(this.geom);
         this.camNote();
-        if (this.state.avoid) { this.drawCameras(); this.recompute("auto"); }
+        if (this.state.avoid) this.recompute("auto");
       });
     },
-    /* a dot per camera and the wedge it looks down, while avoiding them */
-    drawCameras() {
-      if (this._camLayer) { this._camLayer.remove(); this._camLayer = null; }
-      if (!this.state.avoid || !Cameras.list.length) return;
-      const layer = L.layerGroup(), colour = css("--short") || "#d9480f";
-      for (const c of Cameras.list) {
-        const KX = 111320 * Math.cos(c.lat * Math.PI / 180), KY = 110540;
-        for (const [mid, half] of c.sectors) {
-          const pts = [[c.lat, c.lon]];
-          for (let k = -4; k <= 4; k++) {
-            const b = (mid + half * k / 4) * Math.PI / 180;
-            pts.push([c.lat + CAM_RANGE_M * Math.cos(b) / KY, c.lon + CAM_RANGE_M * Math.sin(b) / KX]);
-          }
-          L.polygon(pts, { stroke: false, fillColor: colour, fillOpacity: 0.16, interactive: false }).addTo(layer);
-        }
-        L.circleMarker([c.lat, c.lon], { radius: 3, stroke: true, color: "#fff", weight: 1,
-          fillColor: colour, fillOpacity: 0.95, interactive: false }).addTo(layer);
-      }
-      this._camLayer = layer.addTo(this.map);
-    },
-    /* Ring the cameras the route on show is in view of, whether or not they
-     * are being avoided: with avoidance on these are the ones that could
-     * not be, and they are the reason the count is not zero. */
+    /* Ring the cameras the route on show could not avoid. Nothing about
+     * cameras is drawn unless the visitor has asked to avoid them, and then
+     * only these: the ones the route is still in view of, which are the
+     * reason its count is not zero. */
     drawTouched(u) {
       if (this._touchLayer) { this._touchLayer.remove(); this._touchLayer = null; }
-      if (!u || !u.camIds || !u.camIds.length) return;
+      if (!this.state.avoid || !u || !u.camIds || !u.camIds.length) return;
       const layer = L.layerGroup(), colour = css("--short") || "#d1452c";
       for (const id of u.camIds) {
         const c = Cameras.list[id];
@@ -2888,7 +2868,7 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       const n = u.cams + " camera" + (u.cams === 1 ? "" : "s");
       return this.avoiding()
         ? " <span class='camhit'>In view of " + n + " that cannot be avoided, ringed on the map.</span>"
-        : " <span class='camhit'>In view of " + n + ", ringed on the map.</span>";
+        : " In view of " + n + ".";
     },
 
     calm() { return this.state.mode === "bike" && this.state.calm; },
@@ -3609,11 +3589,10 @@ window.Bundle = Bundle; window.inflate = inflate; window.loadBundle = loadBundle
       if (!tok || !tok.endsWith("c")) return tok;
       if (Cameras.mask) {
         this.state.avoid = true; $("cams").checked = true;
-        this.drawCameras();
         Cameras.refresh().then((changed) => {
           if (!changed) return;
           Cameras.cover(this.geom); this.camNote();
-          if (this.state.avoid) { this.drawCameras(); this.recompute("auto"); }
+          if (this.state.avoid) this.recompute("auto");
         });
       }
       return tok.slice(0, -1);
