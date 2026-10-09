@@ -273,6 +273,13 @@ def download_all(force: bool = False) -> dict[str, object]:
         except Exception as exc:  # optional: bike mode falls back to road class
             log.warning("bike facility inventory unavailable (%s); bike "
                         "comfort will use road class only", exc)
+    with step("downloading license-plate cameras (OpenStreetMap / DeFlock)", log):
+        try:
+            from .cameras import download_cameras
+            out["cameras"] = download_cameras(force=force)
+        except Exception as exc:  # optional: the route page hides the option
+            log.warning("camera data unavailable (%s); the route page will "
+                        "not offer to avoid cameras", exc)
     with step("downloading places and addresses (Overture)", log):
         try:
             out["places"], out["addresses"] = download_places(force=force)

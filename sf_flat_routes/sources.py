@@ -266,6 +266,28 @@ DATASETS: tuple[Dataset, ...] = (
         optional=True,
     ),
     Dataset(
+        key="alpr_cameras",
+        title="Automated license plate readers (DeFlock / OpenStreetMap)",
+        publisher="OpenStreetMap contributors, mapped through DeFlock (deflock.me)",
+        url="https://overpass-api.de/api/interpreter",
+        accessed=ACCESS_DATE + " for the baked snapshot; the page asks again, "
+                 "live, when the option is ticked",
+        resolution="Point per camera (man_made=surveillance, "
+                   "surveillance:type=ALPR) with the direction it faces; "
+                   "about 1,360 in the study box, 9 in 10 Flock Safety",
+        licence="ODbL 1.0 (OpenStreetMap contributors)",
+        role="Route finder: 'avoid Flock cameras' (see cameras.py).",
+        local="data/raw/alpr_cameras.json",
+        limitations=(
+            "Crowd-sourced: a camera nobody has mapped is not avoided, and a "
+            "removed one may linger. What a camera sees is modelled, not "
+            "known: 40 m along the direction it faces and 10 m all round. "
+            "DeFlock's own CDN is the fallback source at build time; it "
+            "sends no CORS header, so the page asks the Overpass API."
+        ),
+        optional=True,
+    ),
+    Dataset(
         key="bike_network",
         title="Existing bicycle and trail facilities, Atlanta region (April 2026)",
         publisher="Atlanta Regional Commission",

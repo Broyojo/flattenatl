@@ -50,6 +50,10 @@
     <input type="checkbox" id="outback">
     <span>Allow out and back <small>the same streets there and back, often the flattest way</small></span>
   </label>
+  <label class="calm" id="camrow" hidden>
+    <input type="checkbox" id="cams">
+    <span>Avoid Flock cameras <small id="camnote">license-plate cameras on DeFlock</small></span>
+  </label>
   <div class="statusrow">
     <div class="status" id="status"></div>
     <button class="link" id="share" type="button" hidden>Copy link</button>
@@ -85,6 +89,17 @@
     bike, <i>prefer calm streets</i> counts protected lanes and paths
     (Atlanta Regional Commission inventory) as shorter than they are and busy arterials as
     longer.</p>
+    <p class="fine"><i>Avoid Flock cameras</i> keeps the route out of
+    view of every automated license plate reader on
+    <a href="https://deflock.me">DeFlock</a>, the crowd-sourced map (most
+    are Flock Safety's; all makes are avoided). A camera is taken to see
+    40&nbsp;m down the direction it faces and 10&nbsp;m all round, and a
+    block is closed if any of it is in view. Where no route avoids them
+    all, the one in view for the least distance is used and the page says
+    how many it passes. The page carries a snapshot, and ticking the box
+    asks OpenStreetMap's Overpass API for the current map, which is the
+    only request this page ever makes to anyone else. A camera nobody has
+    mapped is not avoided.</p>
     <p class="fine">Place search is offline: the city's intersections,
     places and addresses are built into this page. Routes stay inside the Atlanta city limits.
     <a href="/*__REPO_URL__*/">Source, data and the full analysis</a>.</p>

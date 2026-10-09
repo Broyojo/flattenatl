@@ -138,3 +138,5 @@ details a{color:var(--accent)}
 }
 @keyframes lblin{from{opacity:0}to{opacity:1}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.camhit{color:var(--short);font-weight:500}
+.camok{color:var(--route);font-weight:500}

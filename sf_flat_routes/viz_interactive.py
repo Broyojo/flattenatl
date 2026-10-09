@@ -329,6 +329,7 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
     import hashlib
     import shutil
 
+    from .cameras import build_cameras
     from .download import ADDRESSES_PARQUET, PLACES_PARQUET
     from .places import build_addresses, build_hillshade, build_places
     from .webgraph import bundle
@@ -355,6 +356,10 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
         log.warning("hillshade unavailable (%s)", exc)
         hillshade = None
 
+    cameras = build_cameras()
+    if cameras is None:
+        log.warning("no camera snapshot; the route page will not offer to avoid them")
+
     with step("bundling the route page payload", log):
         packed = bundle(dict(graph, arrays=arrays), strings)
     common = {
@@ -363,7 +368,7 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
     }
 
     # one file that opens from disk: everything inline
-    inline = dict(common, bundle=packed["b64"],
+    inline = dict(common, cameras=cameras, bundle=packed["b64"],
                   hillshade=hillshade and {"bounds": hillshade["bounds"],
                                            "data_uri": hillshade["data_uri"]})
     SIMPLE_HTML.write_text(_route_page_html(inline, linked=False), encoding="utf-8")
@@ -394,6 +399,16 @@ def _write_route_page(ctx, graph: dict, pts: dict) -> Path:
     gz_name = f"graph-{hashlib.sha1(gz).hexdigest()[:10]}.bin.gz"
     (data_dir / gz_name).write_bytes(gz)
     linked = dict(common, bundle_url="data/" + gz_name, bundle_bytes=len(gz))
+    if cameras:
+        # the camera list as a file of its own, so a refreshed snapshot does
+        # not change the 6 MB graph's name and cost every visitor a download
+        cam_json = json.dumps(cameras["cams"], separators=(",", ":"))
+        cam_name = f"cameras-{hashlib.sha1(cam_json.encode('utf-8')).hexdigest()[:10]}.json"
+        (data_dir / cam_name).write_text(cam_json, encoding="utf-8")
+        linked["cameras"] = dict({k: v for k, v in cameras.items() if k != "cams"},
+                                 url="data/" + cam_name)
+    else:
+        linked["cameras"] = None
     if hillshade:
         png = hillshade["png"]
         png_name = f"hillshade-{hashlib.sha1(png).hexdigest()[:10]}.png"

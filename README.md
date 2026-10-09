@@ -69,6 +69,22 @@ shown, with how much less it climbs than a typical loop of the same length
 from the same start. Out-and-backs are left out unless *Allow out and back*
 is ticked; near the BeltLine they usually win.
 
+**Avoid Flock cameras** keeps the route out of view of every automated
+license plate reader on [DeFlock](https://deflock.me), the crowd-sourced
+map: about 720 of them watch a street inside the city, nine in ten made by
+Flock Safety, and all makes are avoided. It comes before everything else.
+With the box ticked the slider runs only over routes in view of no camera,
+from the shortest of those to the flattest. Where no route is clear, the
+page finds the one that passes the fewest, and the slider runs over routes
+that pass only those cameras, which are ringed on the map. Every route,
+box ticked or not, says how many cameras it is in view of.
+
+From Georgia Tech to Krog Street Market the plain routes pass two to six
+cameras and the camera-free ones swap Edgewood Avenue for Auburn, for a
+fifth of a mile. From Five Points to Lenox Square the plain routes pass 8
+to 25; with the box ticked every route passes one, beside the mall, that
+cannot be avoided.
+
 ![The route finder](outputs/screenshot_route_finder.png)
 
 Place search is **offline**: street intersections ("10th & Peachtree"),
@@ -477,6 +493,39 @@ with its neighborhood and, where the name recurs, its street
 ([`sf_flat_routes/places.py`](sf_flat_routes/places.py)). Addresses are
 143,000 (street, number) points in 10 bytes each.
 
+### Cameras
+
+DeFlock's database is OpenStreetMap: a camera is a node tagged
+`man_made=surveillance` and `surveillance:type=ALPR`, nearly always with
+the `direction` it faces. The build bakes a snapshot into the page
+([`cameras.py`](sf_flat_routes/cameras.py), from the Overpass API, with
+DeFlock's own CDN as the fallback), so the option works at once and
+offline. Ticking the box asks Overpass for the current map and re-plans if
+it differs. That is the only request the page makes to anyone else, it
+carries the study box and not the trip, and the copy opened from disk
+skips it, because Overpass refuses a browser that sends no Referer.
+DeFlock's CDN cannot be asked from a page at all: it sends no CORS header,
+and the tile that holds Atlanta is 8 MB.
+
+What a camera sees is modelled, not known: 40 m down the direction it
+faces, 35° either side, and 10 m all round the pole; all round to 40 m
+where no direction is mapped. Flock quotes about 23 m for reading a plate,
+so this errs toward the person who would rather not be in the picture. A
+block between two intersections is *watched* if any of it is in view,
+which is 3.5% of the city's blocks.
+
+Avoiding them is a constraint, not a weight. Watched blocks are closed to
+every search (`Graph.block` in `engine.js`), so the frontier of distance
+against climbing is computed over the streets that are left. If the two
+ends are then cut off from each other, a separate search finds the way
+past the fewest cameras: each camera is charged once, on entering its
+view, at far more than any detour is worth, and a watched metre counts
+three times, to break ties toward less time in view. Only the blocks that
+way needs are reopened, and the frontier is computed again. The count is
+not a proven minimum, because the charge looks only one block back.
+
+A camera nobody has mapped is not avoided.
+
 ### Passes and barriers
 
 "How much climbing is unavoidable between these two parts of the city?" is a
@@ -528,6 +577,7 @@ prints the full table with limitations.
 | City of Atlanta official neighborhoods | City of Atlanta Department of City Planning, served by Atlanta BeltLine, Inc. | 248 polygons with NPU | Open data | Neighborhood names; analysis origins and destinations |
 | City of Atlanta limits | City of Atlanta Department of Transportation | One polygon, 136.3 sq mi | Open data | Clips the network, the search index and the hillshade |
 | Existing bicycle and trail facilities, April 2026 | Atlanta Regional Commission | 846 lines region-wide, about 210 in the city, with facility type and buffer | CC BY 4.0 | Route finder: bike comfort weighting (`bikeways.py`) |
+| Automated license plate readers | OpenStreetMap contributors, mapped through [DeFlock](https://deflock.me); read from the Overpass API | Point per camera with the direction it faces; 1,360 in the study box; snapshot at build, live when the option is ticked | ODbL 1.0 | Route finder: avoid Flock cameras (`cameras.py`) |
 | Bicycle facilities / low-stress streets | Derived from Overture/OSM attributes | Vector | ODbL 1.0 | Explorer bicycle overlay |
 | Overture Maps base theme (land use, infrastructure, land), release `2026-08-19.0` | Overture Maps Foundation (derived from OpenStreetMap) | Mapped outlines and points | ODbL 1.0 | Route finder search only: parks, schools, stations, bridges |
 | Overture Maps places, release `2026-08-19.0` | Overture Maps Foundation (Meta / Microsoft POI data) | Points with names, categories, confidence | CDLA-Permissive 2.0 | Route finder search only: landmarks, shops, cafes (noisy; see `places.py`) |
@@ -629,7 +679,7 @@ with `uv run python tests/qa_screenshots.py`.
 ### Tests
 
 ```bash
-uv run python -m pytest tests/ -q             # 160 tests
+uv run python -m pytest tests/ -q             # 168 tests
 ```
 
 Covering grade computation, cumulative elevation gain (dead-band behaviour,
@@ -679,6 +729,7 @@ sf_flat_routes/
   viz_static.py       publication maps (matplotlib + lidar hillshade)
   webgraph.py         packs the graph into a compressed browser payload
   bikeways.py         bike facility conflation and the bike comfort table
+  cameras.py          license-plate camera snapshot (DeFlock / OpenStreetMap)
   places.py           offline place index for the route finder, and the
                       hillshade base image
   viz_interactive.py  assembles the two self-contained web pages
@@ -752,6 +803,10 @@ the sea.
   measured about eight on San Francisco's 41% Bradford Street). For a
   project about *flat* routes, clipping the peak of a wall is a much
   cheaper error than inventing gradient on flat ground.
+- **Camera avoidance is only as good as the map.** DeFlock is
+  crowd-sourced: an unmapped camera is not avoided, a removed one may
+  linger, and what each one sees is a 40 m wedge, not a measurement. It
+  covers license plate readers, not every camera on a building.
 - **The place search is only as good as its sources.** Intersections and
   addresses are solid; Overture's places feed puts some names in the wrong
   place, and the corroboration rules in `places.py` remove the worst of it

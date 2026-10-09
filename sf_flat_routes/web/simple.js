@@ -338,10 +338,176 @@
     },
   });
 
+  /* ------------------------------------------------- license-plate cameras */
+  /* DeFlock's map of automated license plate readers, which is OpenStreetMap
+   * (man_made=surveillance, surveillance:type=ALPR). The page carries a
+   * snapshot (cameras.py) and asks the Overpass API for the current set
+   * when the visitor asks to avoid them.
+   *
+   * What a camera sees is modelled, not known: everything within CAM_NEAR_M
+   * of the pole, and out to CAM_RANGE_M inside CAM_HALF_DEG either side of
+   * the direction it faces (all round, where no direction is mapped). Flock
+   * quotes about 23 m for reading a plate; 40 m errs on the side of the
+   * person who would rather not be in the picture. A street is "watched"
+   * if any part of the block between two intersections is in view. */
+  const CAM_RANGE_M = 40, CAM_NEAR_M = 10, CAM_HALF_DEG = 35, CAM_RANGE_PAD_DEG = 10;
+  const CARDINAL = { n: 0, nne: 22.5, ne: 45, ene: 67.5, e: 90, ese: 112.5, se: 135, sse: 157.5,
+    s: 180, ssw: 202.5, sw: 225, wsw: 247.5, w: 270, wnw: 292.5, nw: 315, nnw: 337.5 };
+
+  /* OSM's direction ("180", "70;340", "270-315", "NW") as [[centre, half
+   * width], ...] in compass degrees; empty means the camera sees all round */
+  function camSectors(dir) {
+    const out = [];
+    const one = (t) => (t in CARDINAL ? CARDINAL[t] : (/^\d+(\.\d+)?$/.test(t) ? +t : NaN));
+    for (const part of String(dir || "").split(";")) {
+      const p = part.trim().toLowerCase();
+      if (!p) continue;
+      const r = /^([a-z]+|\d+(?:\.\d+)?)\s*-\s*([a-z]+|\d+(?:\.\d+)?)$/.exec(p);
+      if (r) {
+        const a = one(r[1]), b = one(r[2]);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        const span = ((b - a) % 360 + 360) % 360;          // clockwise from a round to b
+        out.push([(a + span / 2) % 360, span / 2 + CAM_RANGE_PAD_DEG]);
+      } else {
+        const a = one(p);
+        if (Number.isFinite(a)) out.push([a % 360, CAM_HALF_DEG]);
+      }
+    }
+    return out;
+  }
+
+  const Cameras = {
+    list: [], asof: "", live: false, mask: null, edgeCams: null, watching: 0,
+
+    /* cams: [[lon, lat, direction], ...] */
+    set(cams, asof, live) {
+      this.list = cams.map(([lon, lat, dir]) => ({ lon, lat, sectors: camSectors(dir) }));
+      this.asof = asof || ""; this.live = !!live;
+      this.mask = null; this.edgeCams = null;
+    },
+
+    /* a point dx east and dy north of a camera, in metres: in view? */
+    sees(cam, dx, dy) {
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= CAM_NEAR_M * CAM_NEAR_M) return true;
+      if (d2 > CAM_RANGE_M * CAM_RANGE_M) return false;
+      if (!cam.sectors.length) return true;
+      const bearing = Math.atan2(dx, dy) * 180 / Math.PI;
+      for (const [c, half] of cam.sectors) {
+        if (Math.abs(((bearing - c) % 360 + 540) % 360 - 180) <= half) return true;
+      }
+      return false;
+    },
+
+    /* edges in 0.001-degree cells, built once: which blocks are near a point */
+    grid(geom) {
+      if (geom._camGrid) return geom._camGrid;
+      const CELL = 0.001, cells = new Map(), b = geom.bbox;
+      const key = (cx, cy) => cx * 100003 + cy;
+      for (let i = 0; i < geom.nEdges; i++) {
+        const o = i * 4;
+        const x0 = Math.floor(b[o] / CELL), x1 = Math.floor(b[o + 2] / CELL);
+        const y0 = Math.floor(b[o + 1] / CELL), y1 = Math.floor(b[o + 3] / CELL);
+        for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+          const k = key(cx, cy); let c = cells.get(k);
+          if (!c) cells.set(k, c = []);
+          c.push(i);
+        }
+      }
+      return (geom._camGrid = { CELL, cells, key });
+    },
+
+    /* which blocks each camera watches: mask[edge] and edgeCams[edge] */
+    cover(geom) {
+      if (this.mask) return;
+      const { CELL, cells, key } = this.grid(geom);
+      const mask = new Uint8Array(geom.nEdges), edgeCams = new Map();
+      const stamp = new Int32Array(geom.nEdges).fill(-1), KY = 110540, STEP = 4;
+      let watching = 0;
+      this.list.forEach((cam, ci) => {
+        const KX = 111320 * Math.cos(cam.lat * Math.PI / 180);
+        const rx = CAM_RANGE_M / KX, ry = CAM_RANGE_M / KY;
+        let any = false;
+        for (let cx = Math.floor((cam.lon - rx) / CELL); cx <= Math.floor((cam.lon + rx) / CELL); cx++) {
+          for (let cy = Math.floor((cam.lat - ry) / CELL); cy <= Math.floor((cam.lat + ry) / CELL); cy++) {
+            for (const e of cells.get(key(cx, cy)) || []) {
+              if (stamp[e] === ci) continue;
+              stamp[e] = ci;
+              let hit = false;
+              for (let k = geom.starts[e]; k + 2 < geom.starts[e + 1] && !hit; k += 2) {
+                const ax = (geom.coords[k] - cam.lon) * KX, ay = (geom.coords[k + 1] - cam.lat) * KY;
+                const bx = (geom.coords[k + 2] - cam.lon) * KX, by = (geom.coords[k + 3] - cam.lat) * KY;
+                const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / STEP));
+                for (let j = 0; j <= n && !hit; j++) {
+                  hit = this.sees(cam, ax + (bx - ax) * j / n, ay + (by - ay) * j / n);
+                }
+              }
+              if (!hit) continue;
+              mask[e] = 1; any = true;
+              const l = edgeCams.get(e);
+              if (l) l.push(ci); else edgeCams.set(e, [ci]);
+            }
+          }
+        }
+        if (any) watching++;
+      });
+      this.mask = mask; this.edgeCams = edgeCams; this.watching = watching;
+    },
+
+    /* the cameras a route passes in view of */
+    onRoute(graph, arcs) {
+      const seen = new Set();
+      if (!this.edgeCams) return seen;
+      for (const a of arcs) {
+        const l = this.edgeCams.get(graph.arcEdge[a]);
+        if (l) for (const c of l) seen.add(c);
+      }
+      return seen;
+    },
+
+    /* Ask Overpass for the cameras as they are mapped right now. Resolves to
+     * true if the set was replaced. One answer is kept for half an hour, so
+     * ticking and unticking does not ask again. */
+    async refresh() {
+      const meta = DATA.cameras;
+      if (!meta || this.live || this._asking) return false;
+      // Overpass turns away a browser that sends no Referer, which a page
+      // opened from disk cannot: that copy keeps its snapshot
+      if (location.protocol === "file:") return false;
+      this._asking = true;
+      try {
+        let got = null;
+        try {
+          const c = JSON.parse(sessionStorage.getItem("alpr") || "null");
+          if (c && Date.now() - c.t < 30 * 60e3) got = c;
+        } catch (e) { /* no storage */ }
+        for (const url of got ? [] : meta.overpass) {
+          try {
+            const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 20000);
+            const r = await fetch(url + "?data=" + encodeURIComponent(meta.query), { signal: ctl.signal });
+            clearTimeout(timer);
+            if (!r.ok) continue;
+            const d = await r.json();
+            if (!d.elements || !d.elements.length) continue;
+            got = { t: Date.now(), asof: (d.osm3s && d.osm3s.timestamp_osm_base) || "",
+              cams: d.elements.filter((e) => e.type === "node").map((e) => [e.lon, e.lat,
+                (e.tags && (e.tags.direction || e.tags["camera:direction"])) || ""]) };
+            try { sessionStorage.setItem("alpr", JSON.stringify(got)); } catch (e) { /* full, or none */ }
+            break;
+          } catch (e) { /* that instance is down or slow: the next, or the snapshot */ }
+        }
+        if (!got) return false;
+        this.set(got.cams, got.asof, true);
+        return true;
+      } finally { this._asking = false; }
+    },
+  };
+
   /* -------------------------------------------------------------- the app */
   const App = {
     state: { mode: "walk", from: null, to: null, t: 1, focus: "from", calm: true,
-      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: false },
+      loop: false, loopMi: LOOP_DEFAULT_MI, loopIdx: 0, savedTo: null, outBack: false,
+      avoid: false },
     family: null, shown: null, fading: null,
 
     async start() {
@@ -362,6 +528,7 @@
 
       this.buildMap();
       this.buildUI();
+      await this.loadCameras();
       $("status").textContent = "";
       if (!this.readHash() && DATA.default && DATA.default.length === 2) {
         this.setPoint("from", this.placeToPoint(DATA.default[0]), false);
@@ -579,6 +746,7 @@
         this.state.outBack = $("outback").checked;
         this.recompute(true);            // a different kind of run: reframe it
       });
+      $("cams").addEventListener("change", () => this.setAvoid($("cams").checked));
       const sl = $("sl");
       sl.addEventListener("input", () => {
         if (!this.state.loop) { this.state.t = +sl.value; this.show(); this.writeHash(); return; }
@@ -612,6 +780,164 @@
      * calm streets on, length is comfort-weighted instead (engine.js
      * arcLenStress): a protected lane counts shorter, a busy arterial
      * longer, and the climbing axis is untouched. */
+    /* ------------------------------------------------------------ cameras */
+    cameras: Cameras, camSectors,
+    /* the snapshot built into the page: inline, or a file beside the graph */
+    async loadCameras() {
+      const meta = DATA.cameras;
+      if (!meta) return;
+      try {
+        let cams = meta.cams;
+        if (!cams && meta.url) cams = await (await fetch(meta.url)).json();
+        if (!cams || !cams.length) return;
+        Cameras.set(cams, meta.asof, false);
+        Cameras.cover(this.geom);
+        $("camrow").hidden = false;
+        this.camNote();
+      } catch (e) { /* the page works without them; the option stays hidden */ }
+    },
+    avoiding() { return this.state.avoid && !!Cameras.mask; },
+    camNote() {
+      const when = Cameras.asof ? " " + (Cameras.live ? "live, " : "as of ") + Cameras.asof.slice(0, 10) : "";
+      $("camnote").textContent = Cameras.watching.toLocaleString() + " license-plate cameras on DeFlock,"
+        + when + (Cameras.live ? "" : " (snapshot)");
+    },
+    setAvoid(on) {
+      this.state.avoid = !!on;
+      $("cams").checked = this.state.avoid;
+      this.drawCameras();
+      this.recompute("auto");
+      // the snapshot answers at once; the live set follows, and re-plans
+      // only if it changes what the cameras see
+      if (on) Cameras.refresh().then((changed) => {
+        if (!changed) return;
+        Cameras.cover(this.geom);
+        this.camNote();
+        if (this.state.avoid) { this.drawCameras(); this.recompute("auto"); }
+      });
+    },
+    /* a dot per camera and the wedge it looks down, while avoiding them */
+    drawCameras() {
+      if (this._camLayer) { this._camLayer.remove(); this._camLayer = null; }
+      if (!this.state.avoid || !Cameras.list.length) return;
+      const layer = L.layerGroup(), colour = css("--short") || "#d9480f";
+      for (const c of Cameras.list) {
+        const KX = 111320 * Math.cos(c.lat * Math.PI / 180), KY = 110540;
+        for (const [mid, half] of c.sectors) {
+          const pts = [[c.lat, c.lon]];
+          for (let k = -4; k <= 4; k++) {
+            const b = (mid + half * k / 4) * Math.PI / 180;
+            pts.push([c.lat + CAM_RANGE_M * Math.cos(b) / KY, c.lon + CAM_RANGE_M * Math.sin(b) / KX]);
+          }
+          L.polygon(pts, { stroke: false, fillColor: colour, fillOpacity: 0.16, interactive: false }).addTo(layer);
+        }
+        L.circleMarker([c.lat, c.lon], { radius: 3, stroke: true, color: "#fff", weight: 1,
+          fillColor: colour, fillOpacity: 0.95, interactive: false }).addTo(layer);
+      }
+      this._camLayer = layer.addTo(this.map);
+    },
+    /* Ring the cameras the route on show is in view of, whether or not they
+     * are being avoided: with avoidance on these are the ones that could
+     * not be, and they are the reason the count is not zero. */
+    drawTouched(u) {
+      if (this._touchLayer) { this._touchLayer.remove(); this._touchLayer = null; }
+      if (!u || !u.camIds || !u.camIds.length) return;
+      const layer = L.layerGroup(), colour = css("--short") || "#d1452c";
+      for (const id of u.camIds) {
+        const c = Cameras.list[id];
+        if (!c) continue;
+        const KX = 111320 * Math.cos(c.lat * Math.PI / 180), KY = 110540;
+        for (const [mid, half] of c.sectors) {
+          const pts = [[c.lat, c.lon]];
+          for (let k = -4; k <= 4; k++) {
+            const b = (mid + half * k / 4) * Math.PI / 180;
+            pts.push([c.lat + CAM_RANGE_M * Math.cos(b) / KY, c.lon + CAM_RANGE_M * Math.sin(b) / KX]);
+          }
+          L.polygon(pts, { color: colour, weight: 1, opacity: 0.9, fillColor: colour, fillOpacity: 0.38,
+            interactive: false }).addTo(layer);
+        }
+        L.circleMarker([c.lat, c.lon], { radius: 9, color: colour, weight: 2.5, opacity: 1,
+          fillColor: "#fff", fillOpacity: 0.35, interactive: false }).addTo(layer);
+        L.circleMarker([c.lat, c.lon], { radius: 3.5, stroke: true, color: "#fff", weight: 1,
+          fillColor: colour, fillOpacity: 1, interactive: false }).addTo(layer);
+      }
+      this._touchLayer = layer.addTo(this.map);
+    },
+    /* Close the watched blocks for this search. Returns how many cameras
+     * could not be avoided (0 when a clear way exists, or when not avoiding).
+     * `open` are blocks to leave open whatever watches them. */
+    blockCameras(open) {
+      const g = this.graph;
+      if (!this.avoiding()) { g.block(null); return; }
+      if (!open || !open.size) { g.block(Cameras.mask); return; }
+      const mask = new Uint8Array(Cameras.mask);
+      for (const e of open) mask[e] = 0;
+      g.block(mask);
+    },
+    /* No way from a to b avoids every camera: find the way that passes the
+     * fewest, and open only the blocks it needs. A camera is charged once,
+     * on entering its view (CAM_COST metres' worth, far more than any
+     * detour), and not again on the next block if that is still in the same
+     * camera's view; a watched metre also counts three times, so that
+     * between two ways past the same number of cameras the one in view for
+     * less distance wins. The charge looks only at the block just walked,
+     * which makes this a very good answer rather than a proven minimum. */
+    leastSeen(a, b, mode) {
+      const g = this.graph, ec = Cameras.edgeCams, bit = g.modeBit(mode), CAM_COST = 5000;
+      g.block(null);
+      const dist = new Float64Array(g.n).fill(Infinity), prev = new Int32Array(g.n).fill(-1);
+      const done = new Uint8Array(g.n), heap = new MinHeap();
+      dist[a] = 0; heap.push(0, a);
+      while (heap.n > 0) {
+        const u = heap.pop();
+        if (done[u]) continue;
+        done[u] = 1;
+        if (u === b) break;
+        const before = prev[u] >= 0 ? ec.get(g.arcEdge[prev[u]]) : null;
+        for (let k = g.indptr[u]; k < g.indptr[u + 1]; k++) {
+          if ((g.arcFlags[k] & bit) === 0) continue;
+          const cams = ec.get(g.arcEdge[k]);
+          let c = g.arcLen[k] / g.DM;
+          if (cams) {
+            c *= 3;
+            for (const id of cams) if (!before || before.indexOf(id) < 0) c += CAM_COST;
+          }
+          const v = g.head[k], nd = dist[u] + c;
+          if (nd < dist[v]) { dist[v] = nd; prev[v] = k; heap.push(nd, v); }
+        }
+      }
+      if (!done[b]) return null;
+      const open = new Set();
+      for (let v = b, guard = 0; v !== a && guard <= g.n; guard++) {
+        const k = prev[v];
+        if (k < 0) return null;
+        if (ec.has(g.arcEdge[k])) open.add(g.arcEdge[k]);
+        v = g.arcTail(k);
+      }
+      return open;
+    },
+    /* every block watched by a camera that also watches this corner: a loop
+     * that starts in view has to leave through them */
+    seenFrom(node) {
+      const g = this.graph, cams = new Set(), open = new Set();
+      const rev = g.reverse();
+      const touch = (a) => { for (const c of Cameras.edgeCams.get(g.arcEdge[a]) || []) cams.add(c); };
+      for (let a = g.indptr[node]; a < g.indptr[node + 1]; a++) touch(a);
+      for (let k = rev.indptr[node]; k < rev.indptr[node + 1]; k++) touch(rev.arcs[k]);
+      if (cams.size) for (const [e, l] of Cameras.edgeCams) if (l.some((c) => cams.has(c))) open.add(e);
+      return open;
+    },
+    /* "Passes 3 license-plate cameras." for the route on show */
+    camText(u) {
+      if (!Cameras.mask || u.cams === undefined) return "";
+      if (!u.cams) return this.avoiding() ? " <span class='camok'>In view of no camera.</span>"
+        : " In view of no license-plate camera.";
+      const n = u.cams + " camera" + (u.cams === 1 ? "" : "s");
+      return this.avoiding()
+        ? " <span class='camhit'>In view of " + n + " that cannot be avoided, ringed on the map.</span>"
+        : " <span class='camhit'>In view of " + n + ", ringed on the map.</span>";
+    },
+
     calm() { return this.state.mode === "bike" && this.state.calm; },
     lenKey() { return this.calm() ? "stress_m" : "distance_m"; },
     weights(alpha) {
@@ -667,6 +993,7 @@
       const g = this.graph;
       swapText($("status"), "Trying loops…");
       $("slpos").textContent = fmtLoop(loopMi);
+      this.blockCameras(this.avoiding() ? this.seenFrom(from.node) : null);
       const search = g.loops(from.node, mode, { targetM: loopMi * MI, stress: this.calm(), outBack: this.state.outBack });
       this.scanStart(from, loopMi * MI);
       const run = () => {
@@ -772,7 +1099,15 @@
       }
       if (from.node === to.node) { this.clearRoute(); swapText($("status"), "Those are the same corner."); return; }
       const g = this.graph;
-      const shortest = g.route(from.node, to.node, mode, this.weights(0));
+      this.blockCameras();
+      let shortest = g.route(from.node, to.node, mode, this.weights(0));
+      if (!shortest && this.avoiding()) {
+        // every way is watched somewhere: open only the blocks the least
+        // watched way needs, and keep the rest closed
+        const open = this.leastSeen(from.node, to.node, mode);
+        this.blockCameras(open);
+        if (open) shortest = g.route(from.node, to.node, mode, this.weights(0));
+      }
       if (!shortest) {
         this.clearRoute();
         swapText($("status"), mode === "bike" ? "No bikeable route between those points."
@@ -818,7 +1153,9 @@
     member(arcs) {
       const s = this.graph.summarise(arcs);
       return { arcs, stats: s, latlngs: this.graph.geometry(arcs, this.geom),
-        profile: resample(s.profile, 160) };
+        profile: resample(s.profile, 160),
+        camIds: Cameras.mask ? [...Cameras.onRoute(this.graph, arcs)] : undefined,
+        get cams() { return this.camIds && this.camIds.length; } };
     },
 
     /* the frontier is in, sorted shortest to flattest: pick the routes the
@@ -849,6 +1186,7 @@
 
     clearRoute() {
       this.setHover(null); this._loopNext = null;
+      this.drawTouched(null);
       this.familyLayer.clearLayers(); this.routeLayer.clearLayers(); this.labelLayer.clearLayers();
       $("turns").hidden = true;
       this.shown = null; this._handoff = null; this._profCur = null;
@@ -889,6 +1227,7 @@
       const from = hand || (prev && !immediate ? prev : null);
       this.drawRoute(u, colour, prev && !immediate ? prev : null, !!hand);
       this.drawStats(u, from || u);
+      this.drawTouched(u);
       this.animateProfile(from || u, u, 300, hand ? { range: { from: hand.range, to: rangeOf(this.family.unique) } } : {});
       this.placeHoverDot();
     },
@@ -1015,10 +1354,10 @@
       if (this.family.loop) { this.drawLoopDelta(u); return; }
       const sh = this.family.shortest.stats;
       if (u === this.family.shortest) {
-        setText($("delta"), this.family.unique.length > 1
+        setText($("delta"), (this.family.unique.length > 1
           ? (this.calm() ? "The shortest route on calm streets. Slide right to trade distance for less climbing."
             : "The shortest route. Slide right to trade distance for less climbing.")
-          : "Shortest and flattest at once.", true);
+          : "Shortest and flattest at once.") + this.camText(u), true);
       } else {
         const dd = s.distance_m - sh.distance_m, dc = sh.elev_gain_m - s.elev_gain_m;
         const pd = sh.distance_m ? Math.round(100 * dd / sh.distance_m) : 0;
@@ -1027,7 +1366,7 @@
           : "<b class='up'>+" + (dd / MI).toFixed(1) + " mi</b> (" + pd + "% longer)";
         const less = dc <= 0 ? "no less climbing"
           : "<b class='down'>−" + Math.round(dc * FT).toLocaleString() + " ft</b> of climbing (" + pc + "% less)";
-        setText($("delta"), "vs. shortest: " + longer + ", " + less, true);
+        setText($("delta"), "vs. shortest: " + longer + ", " + less + "." + this.camText(u), true);
       }
     },
 
@@ -1044,7 +1383,7 @@
           + " ft</b> of climbing vs. a typical " + fmtLoop(this.state.loopMi) + " from here.";
       } else html = ob + "About as flat as loops from here get.";
       swapText(box, (el) => {
-        el.innerHTML = html;
+        el.innerHTML = html + this.camText(u);
         if (n > 1) {
           const b = document.createElement("button");
           b.type = "button"; b.className = "link"; b.id = "nextloop";
@@ -1259,9 +1598,11 @@
     token() {
       const { from, to, mode, t } = this.state;
       const c = (p) => p.lon.toFixed(5) + "~" + p.lat.toFixed(5);
+      // the mode letter(s), then o for out-and-back, then c for avoiding cameras
+      const cam = this.state.avoid ? "c" : "";
       const m = mode === "bike" ? (this.state.calm ? "b" : "bx") : "w";
-      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "o" : ""), String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
-      return ["t", c(from), c(to), mode === "bike" ? (this.state.calm ? "b" : "bx") : "w", t.toFixed(3),
+      if (this.state.loop) return ["l", c(from), m + (this.state.outBack ? "o" : "") + cam, String(this.state.loopMi), String(this.state.loopIdx), encLabel(from.label)].join("~");
+      return ["t", c(from), c(to), m + cam, t.toFixed(3),
         encLabel(from.label), encLabel(to.label)].join("~");
     },
     writeHash() {
@@ -1283,6 +1624,7 @@
       if (parts[0] !== "t" || parts.length < 8) return false;
       const nums = parts.slice(1, 5).map(Number);
       if (nums.some((v) => !Number.isFinite(v))) return false;
+      parts[5] = this.readAvoid(parts[5]);
       if (parts[5] === "b" || parts[5] === "bx") {
         this.state.mode = "bike";
         this.state.calm = parts[5] === "b";
@@ -1300,7 +1642,7 @@
     readLoopHash(parts) {
       const lon = +parts[1], lat = +parts[2], mi = +parts[4];
       if (![lon, lat, mi].every(Number.isFinite)) return false;
-      let m = parts[3] || "w";
+      let m = this.readAvoid(parts[3] || "w");
       if (m.endsWith("o")) { m = m.slice(0, -1); this.state.outBack = true; $("outback").checked = true; }
       this.setMode(m);
       this.state.loopMi = clamp(Math.round(mi / LOOP_STEP_MI) * LOOP_STEP_MI, LOOP_MIN_MI, LOOP_MAX_MI);
@@ -1308,6 +1650,20 @@
       this.setLoop(true, false);
       this._pendingLoopIdx = Math.max(0, parseInt(parts[5], 10) || 0);
       return true;
+    },
+    /* a trailing c on the mode: the link was made avoiding cameras */
+    readAvoid(tok) {
+      if (!tok || !tok.endsWith("c")) return tok;
+      if (Cameras.mask) {
+        this.state.avoid = true; $("cams").checked = true;
+        this.drawCameras();
+        Cameras.refresh().then((changed) => {
+          if (!changed) return;
+          Cameras.cover(this.geom); this.camNote();
+          if (this.state.avoid) { this.drawCameras(); this.recompute("auto"); }
+        });
+      }
+      return tok.slice(0, -1);
     },
     setMode(tok) {
       if (tok !== "b" && tok !== "bx") return;

@@ -197,8 +197,60 @@ def page_results():
         out["loop_link"] = page.evaluate("""() => ({ loop: App.state.loop, mi: App.state.loopMi,
             idx: App.state.loopIdx, from: document.getElementById('from').value,
             n: App.family.unique.length, slVal: +document.getElementById('sl').value })""")
+        out["cameras"] = _drive_cameras(page)
         browser.close()
     return out, errors
+
+
+_CAM_STATE = """() => { const g = App.graph, C = App.cameras, f = App.family.unique;
+    return { avoid: App.state.avoid, n: f.length, cams: f.map(u => u.cams),
+        watched: f.map(u => u.arcs.filter(a => C.mask[g.arcEdge[a]]).length),
+        opened: f.map(u => u.arcs.filter(a => C.mask[g.arcEdge[a]] && (g.arcFlags[a] & 1)).length),
+        miles: f.map(u => u.stats.distance_m / 1609.344), gain: f.map(u => u.stats.elev_gain_m),
+        delta: document.getElementById('delta').textContent, token: App.token(),
+        dots: App._camLayer ? App._camLayer.getLayers().length : 0,
+        rings: App._touchLayer ? App._touchLayer.getLayers().length : 0,
+        shownCams: App.shown.camIds.slice() }; }"""
+
+
+def _drive_cameras(page) -> dict:
+    """The default trip and one with no camera-free way, box off and on."""
+    ready = "App.family && !App.family.partial"
+    page.goto(SIMPLE_HTML.resolve().as_uri(), wait_until="load", timeout=240_000)
+    page.reload(wait_until="load", timeout=240_000)
+    page.wait_for_function("window.App && " + ready
+                           + " && !document.getElementById('result').hidden", timeout=240_000)
+    out = {"model": page.evaluate("""() => { const C = App.cameras, s = App.camSectors;
+        const north = { sectors: s('0') }, round = { sectors: s('') };
+        return { row: !document.getElementById('camrow').hidden, note: document.getElementById('camnote').textContent,
+            n: C.list.length, watching: C.watching, masked: C.mask.reduce((a, b) => a + b, 0), edges: C.mask.length,
+            sectors: [s('180'), s('70;340'), s('270-315'), s('350-10'), s('NW'), s(''), s('bogus')],
+            ahead: C.sees(north, 0, 30), behind: C.sees(north, 0, -30), under: C.sees(north, 0, -8),
+            beyond: C.sees(north, 0, 50), side: C.sees(north, 30, 5), anyway: C.sees(round, -25, -25) }; }""")}
+    out["default_off"] = page.evaluate(_CAM_STATE)
+    page.click("#cams")
+    page.wait_for_function("App.state.avoid && " + ready, timeout=120_000)
+    page.wait_for_timeout(600)
+    out["default_on"] = page.evaluate(_CAM_STATE)
+    # Five Points to Lenox Square: every way north out of Buckhead's grid
+    # into the mall is watched by something
+    trip = """(on) => { if (App.state.avoid !== on) document.getElementById('cams').click();
+        App.setPoint('from', App.pointAt(-84.3916, 33.75389, 'Five Points'), false);
+        App.setPoint('to', App.pointAt(-84.3622, 33.84652, 'Lenox Square'), false);
+        App.recompute('auto'); }"""
+    for on, key in ((False, "lenox_off"), (True, "lenox_on")):
+        page.evaluate(trip, on)
+        page.wait_for_function("(on) => App.state.avoid === on && " + ready, arg=on, timeout=120_000)
+        page.wait_for_timeout(600)
+        out[key] = page.evaluate(_CAM_STATE)
+    # a link made with the box ticked reopens with it ticked
+    token = out["lenox_on"]["token"]
+    page.goto(SIMPLE_HTML.resolve().as_uri() + "#" + token, wait_until="load", timeout=240_000)
+    page.reload(wait_until="load", timeout=240_000)
+    page.wait_for_function("window.App && " + ready, timeout=240_000)
+    out["link"] = page.evaluate("""() => ({ avoid: App.state.avoid, checked: document.getElementById('cams').checked,
+        cams: App.family.unique.map(u => u.cams), token: App.token() })""")
+    return out
 
 
 def test_loops_close_on_themselves_and_are_flat(page_results):
@@ -314,6 +366,60 @@ def test_every_branch_of_a_chain_is_offered_nearest_first(page_results):
     assert names[:4] == ("Whole Foods Market",) * 4
     assert len(set(wheres[:4])) == 4, wheres          # each says where it is
     assert "14th St NW" in wheres[0], wheres          # nearest to Georgia Tech
+
+
+def test_a_camera_sees_down_its_direction_and_a_little_all_round(page_results):
+    m = page_results[0]["cameras"]["model"]
+    assert m["sectors"][0] == [[180, 35]]
+    assert m["sectors"][1] == [[70, 35], [340, 35]]
+    assert m["sectors"][2] == [[292.5, 32.5]]            # a range, padded by 10 degrees
+    assert m["sectors"][3] == [[0, 20]]                  # a range across north
+    assert m["sectors"][4] == [[315, 35]]
+    assert m["sectors"][5] == [] and m["sectors"][6] == []
+    assert m["ahead"] and m["under"] and m["anyway"]
+    assert not m["behind"] and not m["beyond"] and not m["side"]
+    # the snapshot is loaded, and watches a small share of the city's blocks
+    assert m["row"] and "DeFlock" in m["note"]
+    assert m["n"] > 300 and 0.8 * m["n"] < m["watching"] <= m["n"]
+    assert 0.01 < m["masked"] / m["edges"] < 0.10
+
+
+def test_avoiding_cameras_comes_before_everything_else(page_results):
+    """With the box ticked every route on the slider is clear of cameras,
+    and shortest against flattest is only traded among those."""
+    c = page_results[0]["cameras"]
+    off, on = c["default_off"], c["default_on"]
+    assert not off["avoid"] and on["avoid"]
+    assert max(off["cams"]) >= 1, "the plain routes should pass a camera somewhere"
+    assert off["dots"] == 0 and on["dots"] > 300          # every camera drawn while avoiding
+    assert on["n"] >= 2 and set(on["cams"]) == {0} and set(on["watched"]) == {0}
+    assert on["rings"] == 0 and "no camera" in on["delta"]
+    # still a frontier: sliding right is never shorter and never climbs more
+    for a, b in zip(on["miles"], on["miles"][1:]):
+        assert b >= a - 1e-9
+    for a, b in zip(on["gain"], on["gain"][1:]):
+        assert b <= a + 1e-6
+    # and it costs something: no camera-free route beats the plain shortest
+    assert on["miles"][0] >= off["miles"][0] - 1e-9
+    assert off["token"].split("~")[5] == "w" and on["token"].split("~")[5] == "wc"
+
+
+def test_where_no_route_is_clear_every_route_passes_the_fewest(page_results):
+    c = page_results[0]["cameras"]
+    off, on = c["lenox_off"], c["lenox_on"]
+    assert min(off["cams"]) >= 2
+    # one count for the whole slider, and it is below anything the plain search found
+    assert len(set(on["cams"])) == 1 and 1 <= on["cams"][0] < min(off["cams"])
+    assert "cannot be avoided" in on["delta"]
+    # the cameras passed are ringed, and nothing else on the route is watched
+    # except the blocks that had to be opened for them
+    assert on["rings"] >= 2 * len(on["shownCams"]) and len(on["shownCams"]) == on["cams"][-1]
+    assert on["watched"] == on["opened"]
+    # the plain routes ring theirs too
+    assert off["rings"] >= 2 * len(off["shownCams"]) > 0
+    link = c["link"]
+    assert link["avoid"] and link["checked"] and link["token"] == on["token"]
+    assert set(link["cams"]) == set(on["cams"])
 
 
 def test_the_slider_ends_are_the_shortest_and_the_flattest(page_results):
@@ -451,6 +557,7 @@ def test_the_site_loads_its_graph_over_http(served_site):
             timeout=240_000)
         out = page.evaluate("""() => ({
             inline: !!window.DATA.bundle, url: window.DATA.bundle_url,
+            cameras: window.DATA.cameras && window.DATA.cameras.url, camCount: App.cameras.list.length,
             hillshade: window.DATA.hillshade && window.DATA.hillshade.url,
             shade: !!document.querySelector('img.hillshade') && document.querySelector('img.hillshade').naturalWidth,
             routes: App.family.unique.length, status: document.getElementById('status').textContent,
@@ -461,10 +568,11 @@ def test_the_site_loads_its_graph_over_http(served_site):
     assert not out["inline"] and out["url"].startswith("data/graph-")
     assert out["hillshade"].startswith("data/hillshade-") and out["shade"] > 1000
     assert out["routes"] >= 2
+    assert out["cameras"].startswith("data/cameras-") and out["camCount"] > 300
     import re
     index = SITE_INDEX.read_text(encoding="utf-8")
     refs = re.findall(r'(?:href|src)="([^"]+)"', index)
     local = [r for r in refs if not r.startswith("http")]
     assert any(re.match(r"app-[0-9a-f]{10}\.js$", r) for r in local), local
-    for name in local + [".nojekyll", out["url"], out["hillshade"]]:
+    for name in local + [".nojekyll", out["url"], out["hillshade"], out["cameras"]]:
         assert (SITE_INDEX.parent / name).exists(), name
